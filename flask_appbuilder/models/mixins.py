@@ -1,4 +1,4 @@
-import datetime
+from datetime import datetime
 import logging
 
 from flask import g
@@ -7,13 +7,12 @@ from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.orm import relationship
 import sqlalchemy.types as types
 
-
 log = logging.getLogger(__name__)
 
 
 class FileColumn(types.TypeDecorator):
     """
-        Extends SQLAlchemy to support and mostly identify a File Column
+    Extends SQLAlchemy to support and mostly identify a File Column
     """
 
     impl = types.Text
@@ -21,7 +20,7 @@ class FileColumn(types.TypeDecorator):
 
 class ImageColumn(types.TypeDecorator):
     """
-        Extends SQLAlchemy to support and mostly identify an Image Column
+    Extends SQLAlchemy to support and mostly identify an Image Column
 
     """
 
@@ -33,24 +32,24 @@ class ImageColumn(types.TypeDecorator):
         self.size = size
 
 
-class AuditMixin(object):
+class AuditMixin:
     """
-        AuditMixin
-        Mixin for models, adds 4 columns to stamp,
-        time and user on creation and modification
-        will create the following columns:
+    AuditMixin
+    Mixin for models, adds 4 columns to stamp,
+    time and user on creation and modification
+    will create the following columns:
 
-        :created on:
-        :changed on:
-        :created by:
-        :changed by:
+    :created on:
+    :changed on:
+    :created by:
+    :changed by:
     """
 
-    created_on = Column(DateTime, default=datetime.datetime.now, nullable=False)
+    created_on = Column(DateTime, default=lambda: datetime.now(), nullable=False)
     changed_on = Column(
         DateTime,
-        default=datetime.datetime.now,
-        onupdate=datetime.datetime.now,
+        default=lambda: datetime.now(),
+        onupdate=lambda: datetime.now(),
         nullable=False,
     )
 
@@ -62,8 +61,10 @@ class AuditMixin(object):
 
     @declared_attr
     def created_by(cls):
+        from flask_appbuilder.security.sqla.models import User
+
         return relationship(
-            "User",
+            User,
             primaryjoin="%s.created_by_fk == User.id" % cls.__name__,
             enable_typechecks=False,
         )
@@ -80,8 +81,10 @@ class AuditMixin(object):
 
     @declared_attr
     def changed_by(cls):
+        from flask_appbuilder.security.sqla.models import User
+
         return relationship(
-            "User",
+            User,
             primaryjoin="%s.changed_by_fk == User.id" % cls.__name__,
             enable_typechecks=False,
         )

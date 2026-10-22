@@ -22,7 +22,7 @@ first.
 
 Enabling and using the default implementation is easy just configure the following global config keys on config.py::
 
-    AUTH_TYPE = 1 # Database Authentication
+    AUTH_TYPE = AUTH_DB
     AUTH_USER_REGISTRATION = True
     AUTH_USER_REGISTRATION_ROLE = 'Public'
     # Config for Flask-WTF Recaptcha necessary for user registration
@@ -35,13 +35,6 @@ Enabling and using the default implementation is easy just configure the followi
     MAIL_PASSWORD = 'passwordformail'
     MAIL_DEFAULT_SENDER = 'fabtest10@gmail.com'
 
-
-OpenID Authentication
----------------------
-
-Registering a user when using OpenID authentication is very similar to database authentication, but this time
-all the basic necessary information is fetched from the provider and presented to the user to alter it (or not)
-and submit.
 
 LDAP Authentication
 -------------------

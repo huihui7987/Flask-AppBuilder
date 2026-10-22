@@ -1,38 +1,49 @@
 import datetime
 import logging
 import re
-from typing import Optional
-from urllib.parse import urlparse
+from typing import Any, Optional
 
 from flask import (
     abort,
     current_app,
     flash,
     g,
+    make_response,
     redirect,
     request,
-    Response,
     session,
     url_for,
 )
+from flask_appbuilder._compat import as_unicode
+from flask_appbuilder.actions import action
+from flask_appbuilder.baseviews import BaseView
+from flask_appbuilder.charts.views import DirectByChartView
+from flask_appbuilder.exceptions import (
+    DeleteGroupWithUsersException,
+    DeleteRoleWithUsersException,
+)
+from flask_appbuilder.fieldwidgets import BS3PasswordFieldWidget
+from flask_appbuilder.security.decorators import has_access, no_cache
+from flask_appbuilder.security.forms import (
+    DynamicForm,
+    LoginForm_db,
+    ResetPasswordForm,
+    roles_or_groups_required,
+    UserInfoEdit,
+)
+from flask_appbuilder.security.saml.metadata import get_sp_metadata
+from flask_appbuilder.security.utils import generate_random_string
+from flask_appbuilder.utils.base import get_safe_redirect, lazy_formatter_gettext
+from flask_appbuilder.validators import PasswordComplexityValidator
+from flask_appbuilder.views import expose, ModelView, SimpleFormView
+from flask_appbuilder.widgets import ListWidget, ShowWidget
 from flask_babel import lazy_gettext
 from flask_login import login_user, logout_user
 import jwt
 from werkzeug.security import generate_password_hash
+from werkzeug.wrappers import Response as WerkzeugResponse
 from wtforms import PasswordField, validators
 from wtforms.validators import EqualTo
-
-from .decorators import has_access
-from .forms import LoginForm_db, LoginForm_oid, ResetPasswordForm, UserInfoEdit
-from .._compat import as_unicode
-from ..actions import action
-from ..baseviews import BaseView
-from ..charts.views import DirectByChartView
-from ..fieldwidgets import BS3PasswordFieldWidget
-from ..utils.base import lazy_formatter_gettext
-from ..views import expose, ModelView, SimpleFormView
-from ..widgets import ListWidget, ShowWidget
-
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +99,7 @@ class ResetMyPasswordView(SimpleFormView):
     redirect_url = "/"
     message = lazy_gettext("Password Changed")
 
-    def form_post(self, form):
+    def form_post(self, form: DynamicForm) -> None:
         self.appbuilder.sm.reset_password(g.user.id, form.password.data)
         flash(as_unicode(self.message), "info")
 
@@ -104,7 +115,7 @@ class ResetPasswordView(SimpleFormView):
     redirect_url = "/"
     message = lazy_gettext("Password Changed")
 
-    def form_post(self, form):
+    def form_post(self, form: DynamicForm) -> None:
         pk = request.args.get("pk")
         self.appbuilder.sm.reset_password(pk, form.password.data)
         flash(as_unicode(self.message), "info")
@@ -116,7 +127,7 @@ class UserInfoEditView(SimpleFormView):
     redirect_url = "/"
     message = lazy_gettext("User information changed")
 
-    def form_get(self, form):
+    def form_get(self, form: DynamicForm) -> None:
         item = self.appbuilder.sm.get_user_by_id(g.user.id)
         # fills the form generic solution
         for key, value in form.data.items():
@@ -125,7 +136,7 @@ class UserInfoEditView(SimpleFormView):
             form_field = getattr(form, key)
             form_field.data = getattr(item, key)
 
-    def form_post(self, form):
+    def form_post(self, form: DynamicForm) -> None:
         form = self.form.refresh(request.form)
         item = self.appbuilder.sm.get_user_by_id(g.user.id)
         form.populate_obj(item)
@@ -161,6 +172,7 @@ class UserModelView(ModelView):
         "active": lazy_gettext("Is Active?"),
         "email": lazy_gettext("Email"),
         "roles": lazy_gettext("Role"),
+        "groups": lazy_gettext("Groups"),
         "last_login": lazy_gettext("Last login"),
         "login_count": lazy_gettext("Login count"),
         "fail_login_count": lazy_gettext("Failed login count"),
@@ -176,10 +188,7 @@ class UserModelView(ModelView):
         "username": lazy_gettext(
             "Username valid for authentication on DB or LDAP, unused for OID auth"
         ),
-        "password": lazy_gettext(
-            "Please use a good password policy,"
-            " this application does not check this for you"
-        ),
+        "password": lazy_gettext("The user's password for authentication"),
         "active": lazy_gettext(
             "It's not a good policy to remove a user, just make it inactive"
         ),
@@ -189,10 +198,23 @@ class UserModelView(ModelView):
             " this will associate with a list of permissions",
             _roles_custom_formatter,
         ),
+        "groups": lazy_formatter_gettext(
+            "The user group on the application,"
+            " this will associate with a list of roles associated with the group",
+            _roles_custom_formatter,
+        ),
         "conf_password": lazy_gettext("Please rewrite the user's password to confirm"),
     }
 
-    list_columns = ["first_name", "last_name", "username", "email", "active", "roles"]
+    list_columns = [
+        "first_name",
+        "last_name",
+        "username",
+        "email",
+        "active",
+        "roles",
+        "groups",
+    ]
 
     show_fieldsets = [
         (
@@ -229,16 +251,48 @@ class UserModelView(ModelView):
             {"fields": ["first_name", "last_name", "email"], "expanded": True},
         ),
     ]
+    search_columns = [
+        "first_name",
+        "last_name",
+        "username",
+        "email",
+        "active",
+        "roles",
+        "groups",
+        "created_on",
+        "changed_on",
+        "last_login",
+        "login_count",
+        "fail_login_count",
+    ]
 
-    search_exclude_columns = ["password"]
-
-    add_columns = ["first_name", "last_name", "username", "active", "email", "roles"]
-    edit_columns = ["first_name", "last_name", "username", "active", "email", "roles"]
+    add_columns = [
+        "first_name",
+        "last_name",
+        "username",
+        "active",
+        "email",
+        "roles",
+        "groups",
+    ]
+    edit_columns = [
+        "first_name",
+        "last_name",
+        "username",
+        "active",
+        "email",
+        "roles",
+        "groups",
+    ]
     user_info_title = lazy_gettext("Your user information")
+    validators_columns = {
+        "roles": [roles_or_groups_required],
+        "groups": [roles_or_groups_required],
+    }
 
     @expose("/userinfo/")
     @has_access
-    def userinfo(self):
+    def userinfo(self) -> WerkzeugResponse:
         item = self.datamodel.get(g.user.id, self._base_filters)
         widgets = self._get_show_widget(
             g.user.id, item, show_fieldsets=self.user_show_fieldsets
@@ -252,20 +306,10 @@ class UserModelView(ModelView):
         )
 
     @action("userinfoedit", lazy_gettext("Edit User"), "", "fa-edit", multiple=False)
-    def userinfoedit(self, item):
+    def userinfoedit(self, item: Any) -> WerkzeugResponse:
         return redirect(
             url_for(self.appbuilder.sm.userinfoeditview.__name__ + ".this_form_get")
         )
-
-
-class UserOIDModelView(UserModelView):
-    """
-    View that add OID specifics to User view.
-    Override to implement your own custom view.
-    Then override useroidmodelview property on SecurityManager
-    """
-
-    pass
 
 
 class UserLDAPModelView(UserModelView):
@@ -300,7 +344,7 @@ class UserRemoteUserModelView(UserModelView):
 
 class UserDBModelView(UserModelView):
     """
-    View that add DB specifics to User view.
+    View that adds DB specifics to User view.
     Override to implement your own custom view.
     Then override userdbmodelview property on SecurityManager
     """
@@ -308,18 +352,16 @@ class UserDBModelView(UserModelView):
     add_form_extra_fields = {
         "password": PasswordField(
             lazy_gettext("Password"),
-            description=lazy_gettext(
-                "Please use a good password policy,"
-                " this application does not check this for you"
-            ),
-            validators=[validators.DataRequired()],
+            description=lazy_gettext("The user's password for authentication"),
+            validators=[validators.DataRequired(), PasswordComplexityValidator()],
             widget=BS3PasswordFieldWidget(),
         ),
         "conf_password": PasswordField(
             lazy_gettext("Confirm Password"),
             description=lazy_gettext("Please rewrite the user's password to confirm"),
             validators=[
-                EqualTo("password", message=lazy_gettext("Passwords must match"))
+                validators.DataRequired(),
+                EqualTo("password", message=lazy_gettext("Passwords must match")),
             ],
             widget=BS3PasswordFieldWidget(),
         ),
@@ -332,13 +374,14 @@ class UserDBModelView(UserModelView):
         "active",
         "email",
         "roles",
+        "groups",
         "password",
         "conf_password",
     ]
 
     @expose("/show/<pk>", methods=["GET"])
     @has_access
-    def show(self, pk):
+    def show(self, pk: Any) -> WerkzeugResponse:
         actions = dict()
         actions["resetpasswords"] = self.actions.get("resetpasswords")
         item = self.datamodel.get(pk, self._base_filters)
@@ -357,7 +400,7 @@ class UserDBModelView(UserModelView):
 
     @expose("/userinfo/")
     @has_access
-    def userinfo(self):
+    def userinfo(self) -> WerkzeugResponse:
         actions = dict()
         actions["resetmypassword"] = self.actions.get("resetmypassword")
         actions["userinfoedit"] = self.actions.get("userinfoedit")
@@ -381,7 +424,7 @@ class UserDBModelView(UserModelView):
         "fa-lock",
         multiple=False,
     )
-    def resetmypassword(self, item):
+    def resetmypassword(self, item: Any):
         return redirect(
             url_for(self.appbuilder.sm.resetmypasswordview.__name__ + ".this_form_get")
         )
@@ -389,7 +432,7 @@ class UserDBModelView(UserModelView):
     @action(
         "resetpasswords", lazy_gettext("Reset Password"), "", "fa-lock", multiple=False
     )
-    def resetpasswords(self, item):
+    def resetpasswords(self, item: Any) -> WerkzeugResponse:
         return redirect(
             url_for(
                 self.appbuilder.sm.resetpasswordview.__name__ + ".this_form_get",
@@ -397,12 +440,16 @@ class UserDBModelView(UserModelView):
             )
         )
 
-    def pre_update(self, item):
+    def pre_update(self, item: Any) -> None:
         item.changed_on = datetime.datetime.now()
         item.changed_by_fk = g.user.id
 
-    def pre_add(self, item):
-        item.password = generate_password_hash(item.password)
+    def pre_add(self, item: Any) -> None:
+        item.password = generate_password_hash(
+            password=item.password,
+            method=current_app.config.get("FAB_PASSWORD_HASH_METHOD", "scrypt"),
+            salt_length=current_app.config.get("FAB_PASSWORD_HASH_SALT_LENGTH", 16),
+        )
 
 
 class UserStatsChartView(DirectByChartView):
@@ -479,6 +526,35 @@ class RoleModelView(ModelView):
             self.datamodel.add(new_role)
         return redirect(self.get_redirect())
 
+    def pre_delete(self, item):
+        if item.user:
+            self.update_redirect()
+            raise DeleteRoleWithUsersException(
+                lazy_gettext("User(s) exists in the role, cannot delete")
+            )
+
+
+class UserGroupModelView(ModelView):
+    route_base = "/groups"
+
+    list_title = lazy_gettext("List Groups")
+    show_title = lazy_gettext("Show Group")
+    add_title = lazy_gettext("Add Group")
+    edit_title = lazy_gettext("Edit Group")
+
+    list_columns = ["name", "label", "roles"]
+    show_columns = ["name", "label", "description", "users", "roles"]
+    edit_columns = ["name", "label", "description", "users", "roles"]
+    add_columns = edit_columns
+    order_columns = ["name", "label", "description"]
+
+    def pre_delete(self, item):
+        if item.users:
+            self.update_redirect()
+            raise DeleteGroupWithUsersException(
+                lazy_gettext("User(s) exists in the group, cannot delete")
+            )
+
 
 class RegisterUserModelView(ModelView):
     route_base = "/registeruser"
@@ -500,29 +576,65 @@ class AuthView(BaseView):
     def login(self):
         pass
 
+    def _get_safe_next_url(self) -> str:
+        """Return the requested redirect target, or the application index."""
+        next_url = request.args.get("next", self.appbuilder.get_url_for_index)
+        return get_safe_redirect(next_url)
+
+    def _get_authenticated_user(self):
+        """Resolve the current user before logout clears the session.
+        Returns a fresh User model from DB, or None if not authenticated.
+        Note: g.user may be a LocalProxy that becomes anonymous after
+        logout_user(), or a detached ORM instance whose attribute access
+        raises DetachedInstanceError. We extract the id and re-fetch
+        a concrete, session-bound instance before logout.
+        """
+        user = getattr(g, "user", None)
+        if user is None:
+            return None
+        try:
+            if not user.is_authenticated:
+                return None
+            user_id = user.id
+        except Exception:
+            return None
+        if user_id is not None:
+            return self.appbuilder.sm.get_user_by_id(user_id)
+        return None
+
     @expose("/logout/")
     def logout(self):
+        user = self._get_authenticated_user()
         logout_user()
-        return redirect(self.appbuilder.get_url_for_index)
+        if user is not None:
+            self.appbuilder.sm.on_user_logout(user)
+        return redirect(
+            current_app.config.get(
+                "LOGOUT_REDIRECT_URL", self.appbuilder.get_url_for_index
+            )
+        )
 
 
 class AuthDBView(AuthView):
     login_template = "appbuilder/general/security/login_db.html"
 
     @expose("/login/", methods=["GET", "POST"])
+    @no_cache
     def login(self):
         if g.user is not None and g.user.is_authenticated:
-            return redirect(self.appbuilder.get_url_for_index)
+            # The target has been restricted by get_safe_redirect.
+            return redirect(self._get_safe_next_url())  # lgtm[py/url-redirection]
         form = LoginForm_db()
         if form.validate_on_submit():
+            next_url = get_safe_redirect(request.args.get("next", ""))
             user = self.appbuilder.sm.auth_user_db(
                 form.username.data, form.password.data
             )
             if not user:
                 flash(as_unicode(self.invalid_login_message), "warning")
-                return redirect(self.appbuilder.get_url_for_login)
+                return redirect(self.appbuilder.get_url_for_login_with(next_url))
             login_user(user, remember=False)
-            return redirect(self.appbuilder.get_url_for_index)
+            return redirect(next_url)
         return self.render_template(
             self.login_template, title=self.title, form=form, appbuilder=self.appbuilder
         )
@@ -532,72 +644,25 @@ class AuthLDAPView(AuthView):
     login_template = "appbuilder/general/security/login_ldap.html"
 
     @expose("/login/", methods=["GET", "POST"])
+    @no_cache
     def login(self):
         if g.user is not None and g.user.is_authenticated:
-            return redirect(self.appbuilder.get_url_for_index)
+            # The target has been restricted by get_safe_redirect.
+            return redirect(self._get_safe_next_url())  # lgtm[py/url-redirection]
         form = LoginForm_db()
         if form.validate_on_submit():
+            next_url = get_safe_redirect(request.args.get("next", ""))
             user = self.appbuilder.sm.auth_user_ldap(
                 form.username.data, form.password.data
             )
             if not user:
                 flash(as_unicode(self.invalid_login_message), "warning")
-                return redirect(self.appbuilder.get_url_for_login)
+                return redirect(self.appbuilder.get_url_for_login_with(next_url))
             login_user(user, remember=False)
-            return redirect(self.appbuilder.get_url_for_index)
+            return redirect(next_url)
         return self.render_template(
             self.login_template, title=self.title, form=form, appbuilder=self.appbuilder
         )
-
-
-class AuthOIDView(AuthView):
-    login_template = "appbuilder/general/security/login_oid.html"
-    oid_ask_for = ["email"]
-    oid_ask_for_optional = []
-
-    def __init__(self):
-        super(AuthOIDView, self).__init__()
-
-    @expose("/login/", methods=["GET", "POST"])
-    def login(self, flag=True):
-        @self.appbuilder.sm.oid.loginhandler
-        def login_handler(self):
-            if g.user is not None and g.user.is_authenticated:
-                return redirect(self.appbuilder.get_url_for_index)
-            form = LoginForm_oid()
-            if form.validate_on_submit():
-                session["remember_me"] = form.remember_me.data
-                return self.appbuilder.sm.oid.try_login(
-                    form.openid.data,
-                    ask_for=self.oid_ask_for,
-                    ask_for_optional=self.oid_ask_for_optional,
-                )
-            return self.render_template(
-                self.login_template,
-                title=self.title,
-                form=form,
-                providers=self.appbuilder.sm.openid_providers,
-                appbuilder=self.appbuilder,
-            )
-
-        @self.appbuilder.sm.oid.after_login
-        def after_login(resp):
-            if resp.email is None or resp.email == "":
-                flash(as_unicode(self.invalid_login_message), "warning")
-                return redirect(self.appbuilder.get_url_for_login)
-            user = self.appbuilder.sm.auth_user_oid(resp.email)
-            if user is None:
-                flash(as_unicode(self.invalid_login_message), "warning")
-                return redirect(self.appbuilder.get_url_for_login)
-            remember_me = False
-            if "remember_me" in session:
-                remember_me = session["remember_me"]
-                session.pop("remember_me", None)
-
-            login_user(user, remember=remember_me)
-            return redirect(self.appbuilder.get_url_for_index)
-
-        return login_handler(self)
 
 
 class AuthOAuthView(AuthView):
@@ -605,36 +670,28 @@ class AuthOAuthView(AuthView):
 
     @expose("/login/")
     @expose("/login/<provider>")
-    @expose("/login/<provider>/<register>")
-    def login(
-        self, provider: Optional[str] = None, register: Optional[str] = None
-    ) -> Response:
-        log.debug("Provider: {0}".format(provider))
+    def login(self, provider: Optional[str] = None) -> WerkzeugResponse:
+        log.debug("Provider: %s", provider)
         if g.user is not None and g.user.is_authenticated:
-            log.debug("Already authenticated {0}".format(g.user))
-            return redirect(self.appbuilder.get_url_for_index)
+            log.debug("Already authenticated %s", g.user)
+            # The target has been restricted by get_safe_redirect.
+            return redirect(self._get_safe_next_url())  # lgtm[py/url-redirection]
 
         if provider is None:
-            if len(self.appbuilder.sm.oauth_providers) > 1:
-                return self.render_template(
-                    self.login_template,
-                    providers=self.appbuilder.sm.oauth_providers,
-                    title=self.title,
-                    appbuilder=self.appbuilder,
-                )
-            else:
-                provider = self.appbuilder.sm.oauth_providers[0]["name"]
+            return self.render_template(
+                self.login_template,
+                providers=self.appbuilder.sm.oauth_providers,
+                title=self.title,
+                appbuilder=self.appbuilder,
+            )
 
-        log.debug("Going to call authorize for: {0}".format(provider))
+        log.debug("Going to call authorize for: %s", provider)
+        random_state = generate_random_string()
         state = jwt.encode(
-            request.args.to_dict(flat=False),
-            self.appbuilder.app.config["SECRET_KEY"],
-            algorithm="HS256",
+            request.args.to_dict(flat=False), random_state, algorithm="HS256"
         )
+        session["oauth_state"] = random_state
         try:
-            if register:
-                log.debug("Login to Register")
-                session["register"] = True
             if provider == "twitter":
                 return self.appbuilder.sm.oauth_remotes[provider].authorize_redirect(
                     redirect_uri=url_for(
@@ -652,41 +709,48 @@ class AuthOAuthView(AuthView):
                     state=state.decode("ascii") if isinstance(state, bytes) else state,
                 )
         except Exception as e:
-            log.error("Error on OAuth authorize: {0}".format(e))
+            log.error("Error on OAuth authorize: %s", e)
             flash(as_unicode(self.invalid_login_message), "warning")
             return redirect(self.appbuilder.get_url_for_index)
 
     @expose("/oauth-authorized/<provider>")
-    def oauth_authorized(self, provider: str) -> Response:
+    def oauth_authorized(self, provider: str) -> WerkzeugResponse:
         log.debug("Authorized init")
         if provider not in self.appbuilder.sm.oauth_remotes:
-            flash(u"Provider not supported.", "warning")
+            flash("Provider not supported.", "warning")
             log.warning("OAuth authorized got an unknown provider %s", provider)
             return redirect(self.appbuilder.get_url_for_login)
-        resp = self.appbuilder.sm.oauth_remotes[provider].authorize_access_token()
-        if resp is None:
-            flash(u"You denied the request to sign in.", "warning")
+        try:
+            resp = self.appbuilder.sm.oauth_remotes[provider].authorize_access_token()
+        except Exception as e:
+            log.error("Error authorizing OAuth access token: %s", e)
+            flash("The request to sign in was denied.", "error")
             return redirect(self.appbuilder.get_url_for_login)
-        log.debug("OAUTH Authorized resp: {0}".format(resp))
+        if resp is None:
+            flash("You denied the request to sign in.", "warning")
+            return redirect(self.appbuilder.get_url_for_login)
+        log.debug("OAUTH Authorized resp received for provider: %s", provider)
         # Retrieves specific user info from the provider
         try:
             self.appbuilder.sm.set_oauth_session(provider, resp)
             userinfo = self.appbuilder.sm.oauth_user_info(provider, resp)
         except Exception as e:
-            log.error("Error returning OAuth user info: {0}".format(e))
+            log.error("Error returning OAuth user info: %s", e)
             user = None
         else:
-            log.debug("User info retrieved from {0}: {1}".format(provider, userinfo))
+            log.debug("User info retrieved from %s: %s", provider, userinfo)
             # User email is not whitelisted
             if provider in self.appbuilder.sm.oauth_whitelists:
                 whitelist = self.appbuilder.sm.oauth_whitelists[provider]
                 allow = False
-                for e in whitelist:
-                    if re.search(e, userinfo["email"]):
+                for email in whitelist:
+                    if "email" in userinfo and re.search(
+                        email + "$", userinfo["email"]
+                    ):
                         allow = True
                         break
                 if not allow:
-                    flash(u"You are not authorized.", "warning")
+                    flash("You are not authorized.", "warning")
                     return redirect(self.appbuilder.get_url_for_login)
             else:
                 log.debug("No whitelist for OAuth provider")
@@ -696,35 +760,240 @@ class AuthOAuthView(AuthView):
             flash(as_unicode(self.invalid_login_message), "warning")
             return redirect(self.appbuilder.get_url_for_login)
         else:
-            login_user(user)
             try:
                 state = jwt.decode(
-                    request.args["state"],
-                    self.appbuilder.app.config["SECRET_KEY"],
-                    algorithms=["HS256"],
+                    request.args["state"], session["oauth_state"], algorithms=["HS256"]
                 )
-            except jwt.InvalidTokenError:
-                raise Exception("State signature is not valid!")
+            except (jwt.InvalidTokenError, KeyError):
+                flash(as_unicode("Invalid state signature"), "warning")
+                return redirect(self.appbuilder.get_url_for_login)
 
+            login_user(user)
             next_url = self.appbuilder.get_url_for_index
             # Check if there is a next url on state
             if "next" in state and len(state["next"]) > 0:
-                parsed_uri = urlparse(state["next"][0])
-                if parsed_uri.netloc != request.host:
-                    log.warning("Got an invalid next URL: %s", parsed_uri.netloc)
-                else:
-                    next_url = state["next"][0]
+                next_url = get_safe_redirect(state["next"][0])
             return redirect(next_url)
+
+
+class UserSAMLModelView(UserModelView):
+    """
+    View that adds SAML specifics to User view.
+    Override to implement your own custom view.
+    Then override usersamlmodelview property on SecurityManager.
+    """
+
+    pass
+
+
+class AuthSAMLView(AuthView):
+    """SAML 2.0 Authentication View."""
+
+    login_template = "appbuilder/general/security/login_saml.html"
+
+    @expose("/login/")
+    @expose("/login/<idp>")
+    @no_cache
+    def login(self, idp: Optional[str] = None) -> WerkzeugResponse:
+        if g.user is not None and g.user.is_authenticated:
+            # The target has been restricted by get_safe_redirect.
+            return redirect(self._get_safe_next_url())  # lgtm[py/url-redirection]
+
+        sm = self.appbuilder.sm
+        providers = sm.saml_providers
+
+        if idp is None:
+            if len(providers) == 1:
+                return redirect(url_for(".login", idp=providers[0]["name"]))
+            return self.render_template(
+                self.login_template,
+                providers=providers,
+                title=self.title,
+                appbuilder=self.appbuilder,
+            )
+
+        from onelogin.saml2.errors import (
+            OneLogin_Saml2_Error,
+            OneLogin_Saml2_ValidationError,
+        )
+
+        try:
+            session["saml_idp"] = idp
+            next_url = get_safe_redirect(request.args.get("next", ""))
+            if next_url and next_url != self.appbuilder.get_url_for_index:
+                session["saml_next"] = next_url
+            return redirect(sm.get_saml_login_redirect_url(idp))
+        except (OneLogin_Saml2_Error, OneLogin_Saml2_ValidationError) as e:
+            log.error("SAML error initiating login for IdP '%s': %s", idp, e)
+            flash(as_unicode(self.invalid_login_message), "warning")
+            return redirect(self.appbuilder.get_url_for_index)
+        except ValueError as e:
+            log.error("SAML configuration error for IdP '%s': %s", idp, e)
+            flash(as_unicode(self.invalid_login_message), "warning")
+            return redirect(self.appbuilder.get_url_for_index)
+
+    @expose("/saml/acs/", methods=["POST"])
+    @no_cache
+    def acs(self) -> WerkzeugResponse:
+        """Assertion Consumer Service - receives SAML responses from IdP."""
+        from onelogin.saml2.errors import (
+            OneLogin_Saml2_Error,
+            OneLogin_Saml2_ValidationError,
+        )
+
+        sm = self.appbuilder.sm
+        try:
+            idp = session.get("saml_idp")
+            if not idp:
+                providers = sm.saml_providers
+                if len(providers) == 1:
+                    idp = providers[0]["name"]
+                else:
+                    flash("Could not determine identity provider.", "warning")
+                    return redirect(self.appbuilder.get_url_for_login)
+
+            userinfo = sm.get_saml_userinfo(idp)
+            if userinfo is None:
+                flash(as_unicode(self.invalid_login_message), "warning")
+                return redirect(self.appbuilder.get_url_for_login)
+
+            user = sm.auth_user_saml(userinfo)
+            if user is None:
+                flash(as_unicode(self.invalid_login_message), "warning")
+                return redirect(self.appbuilder.get_url_for_login)
+
+            # Calculate redirect URL before login (so failures don't leave partial state)
+            next_url = session.pop("saml_next", "") or ""
+            if next_url:
+                next_url = get_safe_redirect(next_url)
+            else:
+                next_url = self.appbuilder.get_url_for_index
+
+            # Store SAML session info for SLO
+            session["saml_name_id"] = userinfo.get("saml_name_id")
+            session["saml_session_index"] = userinfo.get("saml_session_index")
+            session["saml_idp"] = idp
+
+            # login_user is the last operation before redirect
+            login_user(user, remember=False)
+            return redirect(next_url)
+
+        except (OneLogin_Saml2_Error, OneLogin_Saml2_ValidationError) as e:
+            log.error("SAML validation error in ACS: %s", e)
+            flash(as_unicode(self.invalid_login_message), "warning")
+            return redirect(self.appbuilder.get_url_for_login)
+        except ValueError as e:
+            # Provider not found or config error
+            log.error("SAML configuration error in ACS: %s", e)
+            flash(as_unicode(self.invalid_login_message), "warning")
+            return redirect(self.appbuilder.get_url_for_login)
+
+    @expose("/saml/slo/", methods=["GET", "POST"])
+    def slo(self) -> WerkzeugResponse:
+        """Single Logout endpoint."""
+        from onelogin.saml2.errors import (
+            OneLogin_Saml2_Error,
+            OneLogin_Saml2_ValidationError,
+        )
+
+        try:
+            idp = session.get("saml_idp")
+            if not idp:
+                user = self._get_authenticated_user()
+                logout_user()
+                if user is not None:
+                    self.appbuilder.sm.on_user_logout(user)
+                return redirect(self.appbuilder.get_url_for_index)
+
+            url, should_logout = self.appbuilder.sm.get_saml_logout_redirect_url(
+                idp,
+                name_id=session.get("saml_name_id"),
+                session_index=session.get("saml_session_index"),
+            )
+            if should_logout:
+                user = self._get_authenticated_user()
+                logout_user()
+                if user is not None:
+                    self.appbuilder.sm.on_user_logout(user)
+            return redirect(url or self.appbuilder.get_url_for_index)
+
+        except (OneLogin_Saml2_Error, OneLogin_Saml2_ValidationError) as e:
+            log.error("SAML SLO validation error: %s", e)
+            user = self._get_authenticated_user()
+            logout_user()
+            if user is not None:
+                self.appbuilder.sm.on_user_logout(user)
+            return redirect(self.appbuilder.get_url_for_index)
+        except ValueError as e:
+            log.error("SAML SLO configuration error: %s", e)
+            user = self._get_authenticated_user()
+            logout_user()
+            if user is not None:
+                self.appbuilder.sm.on_user_logout(user)
+            return redirect(self.appbuilder.get_url_for_index)
+
+    @expose("/logout/")
+    def logout(self) -> WerkzeugResponse:
+        """Override logout to support SAML SLO."""
+        idp = session.get("saml_idp")
+        if idp:
+            try:
+                return redirect(url_for(".slo"))
+            except Exception:
+                pass
+        user = self._get_authenticated_user()
+        logout_user()
+        if user is not None:
+            self.appbuilder.sm.on_user_logout(user)
+        return redirect(
+            current_app.config.get(
+                "LOGOUT_REDIRECT_URL", self.appbuilder.get_url_for_index
+            )
+        )
+
+    @expose("/saml/metadata/")
+    @expose("/saml/metadata/<idp>")
+    def metadata(self, idp: Optional[str] = None) -> WerkzeugResponse:
+        """SP Metadata endpoint.
+
+        Without idp parameter, returns metadata for the first configured provider.
+        With idp parameter, returns metadata for that specific provider.
+        """
+        try:
+            sm = self.appbuilder.sm
+            providers = sm.saml_providers
+            if not providers:
+                abort(404)
+
+            # Use specified IdP or default to first provider
+            provider_name = idp if idp else providers[0]["name"]
+            if idp and not sm.get_saml_provider(idp):
+                log.warning("Metadata requested for unknown IdP: %s", idp)
+                abort(404)
+
+            saml_settings = sm.get_saml_settings(provider_name)
+            metadata_xml = get_sp_metadata(saml_settings)
+
+            resp = make_response(metadata_xml, 200)
+            resp.headers["Content-Type"] = "text/xml"
+            return resp
+        except ValueError as e:
+            log.error("SAML metadata configuration error: %s", e)
+            abort(404)
+        except Exception as e:
+            log.error("Error generating SP metadata: %s", e)
+            abort(500)
 
 
 class AuthRemoteUserView(AuthView):
     login_template = ""
 
     @expose("/login/")
-    def login(self):
-        username = request.environ.get("REMOTE_USER")
+    def login(self) -> WerkzeugResponse:
+        username = request.environ.get(self.appbuilder.sm.auth_remote_user_env_var)
         if g.user is not None and g.user.is_authenticated:
-            return redirect(self.appbuilder.get_url_for_index)
+            # The target has been restricted by get_safe_redirect.
+            return redirect(self._get_safe_next_url())  # lgtm[py/url-redirection]
         if username:
             user = self.appbuilder.sm.auth_user_remote_user(username)
             if user is None:
@@ -733,4 +1002,5 @@ class AuthRemoteUserView(AuthView):
                 login_user(user)
         else:
             flash(as_unicode(self.invalid_login_message), "warning")
-        return redirect(self.appbuilder.get_url_for_index)
+        next_url = request.args.get("next", "")
+        return redirect(get_safe_redirect(next_url))

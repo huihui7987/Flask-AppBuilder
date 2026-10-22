@@ -43,7 +43,7 @@ So we can make a request to our method using::
 
     $ curl http://localhost:8080/api/v1/exampleapi/greeting
 
-To override the base route class blueprint, override the ``base_route`` property,
+To override the base route class blueprint, override the ``route_base`` property,
 so on our previous example::
 
     from flask_appbuilder.api import BaseApi, expose
@@ -52,7 +52,7 @@ so on our previous example::
 
     class ExampleApi(BaseApi):
 
-        base_route = '/newapi/v2/nice'
+        route_base = '/newapi/v2/nice'
 
         @expose('/greeting')
         def greeting(self):
@@ -517,6 +517,28 @@ methods::
     class ExampleApi(BaseApi):
         base_permissions = ['can_private']
 
+API Key Authentication
+~~~~~~~~~~~~~~~~~~~~~~
+
+In addition to JWT tokens, FAB supports API key authentication. API keys are long-lived
+Bearer tokens useful for service-to-service communication or automation scripts.
+
+To enable API key authentication, set ``FAB_API_KEY_ENABLED = True`` in your config.
+
+Once enabled, you can use an API key in the same way as a JWT token::
+
+    $ curl http://localhost:8080/api/v1/example/private \
+      -H "Authorization: Bearer sst_<YOUR_API_KEY>"
+
+API keys are distinguished from JWT tokens by their prefix (default: ``sst_``). When the
+``protect()`` decorator receives a request with an API key:
+
+- If the key is **invalid**, the endpoint returns HTTP **401 Unauthorized**.
+- If the key is valid but the user **lacks permission**, the endpoint returns HTTP **403 Forbidden**.
+- If the key is valid and the user **has permission**, the request proceeds normally.
+
+The OpenAPI spec for protected endpoints lists both ``jwt`` and ``api_key`` as valid security
+schemes, so clients can choose either authentication method.
 
 You can create an alternate JWT user loader, this can be useful if you want
 to use an external Authentication provider and map the JWT identity to your
@@ -1485,20 +1507,22 @@ Enum Fields
 ``ModelRestApi`` offers support for **Enum** fields, you have to declare them
 on a specific way::
 
-    class GenderEnum(enum.Enum):
-        male = 'Male'
-        female = 'Female'
+    class BookType(enum.Enum):
+        HARDCOVER = 1
+        PAPERBACK = 2
+        EBOOK = 3
 
 
-    class Contact(Model):
+    class Book(Model):
         id = Column(Integer, primary_key=True)
-        name = Column(String(150), unique=True, nullable=False)
-        address = Column(String(564))
-        birthday = Column(Date, nullable=True)
-        personal_phone = Column(String(20))
-        personal_celphone = Column(String(20))
-        contact_group_id = Column(Integer, ForeignKey('contact_group.id'), nullable=False)
-        contact_group = relationship("ContactGroup")
-        gender = Column(Enum(GenderEnum), nullable=False, info={"enum_class": GenderEnum})
+        title = Column(String(150), unique=True, nullable=False)
+        type = Column(Enum(BookType), nullable=False)
 
-Notice the ``info={"enum_class": GenderEnum}``
+Default marshmallow behaviour for enums is to return the value of the enum, in this case an integer.
+If you want to return the string representation of the enum you can set this behaviour at the Model definition::
+
+    class Book(Model):
+        id = Column(Integer, primary_key=True)
+        title = Column(String(150), unique=True, nullable=False)
+        type = Column(Enum(BookType), nullable=False, info={"marshmallow_enum": {"by_value": False}})
+

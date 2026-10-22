@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-    Some py2/py3 compatibility support based on a stripped down
-    version of six so we don't have to depend on a specific version
-    of it.
+Some py2/py3 compatibility support based on a stripped down
+version of six so we don't have to depend on a specific version
+of it.
 
-    :copyright: (c) 2013 by Armin Ronacher.
-    :license: BSD, see LICENSE for more details.
+:copyright: (c) 2013 by Armin Ronacher.
+:license: BSD, see LICENSE for more details.
 """
+
 import sys
 
 PY2 = sys.version_info[0] == 2
@@ -25,7 +26,6 @@ if not PY2:
         if isinstance(s, bytes):
             return s.decode("utf-8")
         return str(s)
-
 
 else:
     text_type = unicode  # noqa

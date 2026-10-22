@@ -1,7 +1,7 @@
 from apispec import APISpec
 from apispec.ext.marshmallow import MarshmallowPlugin
 from apispec.ext.marshmallow.common import resolve_schema_cls
-from flask import current_app
+from flask import current_app, request
 from flask_appbuilder.api import BaseApi
 from flask_appbuilder.api import expose, protect, safe
 from flask_appbuilder.basemanager import BaseManager
@@ -30,7 +30,7 @@ class OpenApi(BaseApi):
     @protect()
     @safe
     def get(self, version):
-        """ Endpoint that renders an OpenApi spec for all views that belong
+        """Endpoint that renders an OpenApi spec for all views that belong
             to a certain version
         ---
         get:
@@ -66,18 +66,20 @@ class OpenApi(BaseApi):
 
     @staticmethod
     def _create_api_spec(version):
+        servers = current_app.config.get(
+            "FAB_OPENAPI_SERVERS", [{"url": request.host_url}]
+        )
         return APISpec(
             title=current_app.appbuilder.app_name,
             version=version,
             openapi_version="3.0.2",
             info=dict(description=current_app.appbuilder.app_name),
             plugins=[MarshmallowPlugin(schema_name_resolver=resolver)],
-            servers=[{"url": "/api/{}".format(version)}],
+            servers=servers,
         )
 
 
 class SwaggerView(BaseView):
-
     route_base = "/swagger"
     default_view = "ui"
     openapi_uri = "/api/{}/_openapi"
@@ -85,18 +87,20 @@ class SwaggerView(BaseView):
     @expose("/<version>")
     @has_access
     def show(self, version):
+        # Apply APPLICATION_ROOT config to the swagger URL
+        openapi_uri = request.script_root + self.openapi_uri.format(version)
         return self.render_template(
-            self.appbuilder.app.config.get(
+            current_app.config.get(
                 "FAB_API_SWAGGER_TEMPLATE", "appbuilder/swagger/swagger.html"
             ),
-            openapi_uri=self.openapi_uri.format(version),
+            openapi_uri=openapi_uri,
         )
 
 
 class OpenApiManager(BaseManager):
     def register_views(self):
-        if not self.appbuilder.app.config.get("FAB_ADD_SECURITY_VIEWS", True):
+        if not current_app.config.get("FAB_ADD_OPENAPI_VIEWS", True):
             return
-        if self.appbuilder.get_app.config.get("FAB_API_SWAGGER_UI", False):
+        if current_app.config.get("FAB_API_SWAGGER_UI", False):
             self.appbuilder.add_api(OpenApi)
             self.appbuilder.add_view_no_menu(SwaggerView)

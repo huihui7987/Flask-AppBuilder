@@ -1,20 +1,33 @@
 Security
 ========
 
+Responsible disclosure
+----------------------
+
+We want to keep Flask-AppBuilder safe for everyone. If you've discovered a security vulnerability
+please report to danielvazgaspar@gmail.com.
+
 Supported Authentication Types
 ------------------------------
 
 :Database: username and password style that is queried from the database to match. Passwords are kept hashed on the database.
-:Open ID: Uses the user's email field to authenticate on Gmail, Yahoo etc...
 :LDAP: Authentication against an LDAP server, like Microsoft Active Directory.
 :REMOTE_USER: Reads the *REMOTE_USER* web server environ var, and verifies if it's authorized with the framework users table.
        It's the web server responsibility to authenticate the user, useful for intranet sites, when the server (Apache, Nginx)
        is configured to use kerberos, no need for the user to login with username and password on F.A.B.
 :OAUTH: Authentication using OAUTH (v1 or v2). You need to install authlib.
+:SAML: Authentication using SAML 2.0 (e.g., Microsoft Entra ID, Okta, OneLogin). You need to install python3-saml.
+
+.. note::
+   **Deprecated Authentication Types (Removed in Flask-AppBuilder 5.0+)**
+   
+   - **OpenID Authentication (AUTH_OID)**: Support for OpenID 2.0 authentication has been removed. 
+     For modern OpenID Connect authentication, use OAuth providers that support OpenID Connect protocol.
+   - **MongoDB/MongoEngine Support**: MongoDB backend support has been removed. Please migrate to SQLAlchemy-supported databases.
 
 Configure the authentication type on config.py, take a look at :doc:`config`
 
-The session is preserved and encrypted using Flask-Login, OpenID requires Flask-OpenID.
+The session is preserved and encrypted using Flask-Login.
 
 Authentication Methods
 ----------------------
@@ -27,8 +40,8 @@ configuration imports the constants for the authentication methods::
         AUTH_DB,
         AUTH_LDAP,
         AUTH_OAUTH,
-        AUTH_OID,
-        AUTH_REMOTE_USER
+        AUTH_REMOTE_USER,
+        AUTH_SAML,
     )
 
 Next you will use the **AUTH_TYPE** key to choose the type::
@@ -58,24 +71,6 @@ username and hashed password field kept on your database.
 Administrators can create users with passwords, and users can change their passwords. This is all done using the UI.
 (You can override and extend the default UI as we'll see on *Your Custom Security*)
 
-Authentication: OpenID
-----------------------
-
-This authentication method uses `Flask-OpenID <https://github.com/mitsuhiko/flask-openid>`_. All configuration is done
-on **config.py** using OPENID_PROVIDERS key, just add or remove from the list the providers you want to enable::
-
-    AUTH_TYPE = AUTH_OID
-    OPENID_PROVIDERS = [
-        { 'name': 'Yahoo', 'url': 'https://me.yahoo.com' },
-        { 'name': 'AOL', 'url': 'http://openid.aol.com/<username>' },
-        { 'name': 'Flickr', 'url': 'http://www.flickr.com/<username>' },
-        { 'name': 'MyOpenID', 'url': 'https://www.myopenid.com' }
-    ]
-
-Each list entry is a dict with a readable OpenID name and it's url, if the url needs an username just add it using <username>.
-The login template for this method will provide a text box for the user to fillout his/her username.
-
-F.A.B. will ask for the 'email' from OpenID, and if this email belongs to some user on your application he/she will login successfully.
 
 Authentication: LDAP
 --------------------
@@ -84,10 +79,10 @@ This method will authenticate the user's credentials against an LDAP server.
 
 WARNING: To use LDAP you need to install `python-ldap <https://www.python-ldap.org>`_.
 
-For a typical Microsoft AD setup (where all users can preform LDAP searches)::
+For a typical Microsoft AD setup (where all users can perform LDAP searches)::
 
     AUTH_TYPE = AUTH_LDAP
-    AUTH_LDAP_SERVER = "ldap://ldap.example.com"
+    AUTH_LDAP_SERVER = "ldap://ldap.example.org" # Use "ldap://localhost:1389/" when using the provided LDAP on docker-compose
     AUTH_LDAP_USE_TLS = False
 
     # registration configs
@@ -98,18 +93,18 @@ For a typical Microsoft AD setup (where all users can preform LDAP searches)::
     AUTH_LDAP_EMAIL_FIELD = "mail"  # if null in LDAP, email is set to: "{username}@email.notfound"
 
     # bind username (for password validation)
-    AUTH_LDAP_USERNAME_FORMAT = "uid=%s,ou=users,dc=example,dc=com"  # %s is replaced with the provided username
-    # AUTH_LDAP_APPEND_DOMAIN = "example.com"  # bind usernames will look like: {USERNAME}@example.com
+    # AUTH_LDAP_USERNAME_FORMAT = "uid=%s,ou=users,dc=example,dc=org"  # %s is replaced with the provided username
+    # AUTH_LDAP_APPEND_DOMAIN = "example.org"  # bind usernames will look like: {USERNAME}@example.com
 
     # search configs
-    AUTH_LDAP_SEARCH = "ou=users,dc=example,dc=com"  # the LDAP search base (if non-empty, a search will ALWAYS happen)
+    AUTH_LDAP_SEARCH = "ou=users,dc=example,dc=org"  # the LDAP search base (if non-empty, a search will ALWAYS happen)
     AUTH_LDAP_UID_FIELD = "uid"  # the username field
 
 
 For a typical OpenLDAP setup (where LDAP searches require a special account)::
 
     AUTH_TYPE = AUTH_LDAP
-    AUTH_LDAP_SERVER = "ldap://ldap.example.com"
+    AUTH_LDAP_SERVER = "ldap://ldap.example.org"
     AUTH_LDAP_USE_TLS = False
 
     # registration configs
@@ -120,26 +115,48 @@ For a typical OpenLDAP setup (where LDAP searches require a special account)::
     AUTH_LDAP_EMAIL_FIELD = "mail"  # if null in LDAP, email is set to: "{username}@email.notfound"
 
     # search configs
-    AUTH_LDAP_SEARCH = "ou=users,dc=example,dc=com"  # the LDAP search base
+    AUTH_LDAP_SEARCH = "ou=users,dc=example,dc=org"  # the LDAP search base
     AUTH_LDAP_UID_FIELD = "uid"  # the username field
-    AUTH_LDAP_BIND_USER = "uid=admin,ou=users,dc=example,dc=com"  # the special bind username for search
+    AUTH_LDAP_BIND_USER = "uid=admin,dc=example,dc=org"  # the special bind username for search
     AUTH_LDAP_BIND_PASSWORD = "admin_password"  # the special bind password for search
 
 
 You can limit the LDAP search scope by configuring::
 
-    # only allow users with memberOf="cn=myTeam,ou=teams,dc=example,dc=com"
-    AUTH_LDAP_SEARCH_FILTER = "(memberOf=cn=myTeam,ou=teams,dc=example,dc=com)"
+    # only allow users with memberOf="cn=staff,ou=groups,dc=example,dc=org"
+    AUTH_LDAP_SEARCH_FILTER = "(memberOf=cn=staff,ou=groups,dc=example,dc=org)"
 
-You can give FlaskAppBuilder roles based on LDAP roles (note, this requires AUTH_LDAP_SEARCH to be set)::
+You can give FlaskAppBuilder roles based on LDAP roles/memberships. (note, this requires AUTH_LDAP_SEARCH to be set).
+
+Note that by default roles will be evaluated based on LDAP memberships
+and by the exact match of the LDAP string returned for the user attributes.
+
+You can change AUTH_LDAP_GROUP_FIELD to evaluate roles mapping to different keys onto the
+returned LDAP user attributes. For example using the provided LDAP server with docker-compose
+"Alice" attributes are::
+
+  {
+    'sn': [b'Doe'],
+    'givenName': [b'Alice'],
+    'mail': [b'alice@example.org'],
+    'memberOf': [b'cn=readers,ou=groups,dc=example,dc=org', b'cn=staff,ou=groups,dc=example,dc=org']
+  }
+
+While LDAP is not case-sensitive, FlaskAppBuilder is, so the cases need to match::
 
     # a mapping from LDAP DN to a list of FAB roles
     AUTH_ROLES_MAPPING = {
-        "cn=fab_users,ou=groups,dc=example,dc=com": ["User"],
-        "cn=fab_admins,ou=groups,dc=example,dc=com": ["Admin"],
+        "CN=fab_users,OU=groups,DC=example,dc=org": ["User"],
+        "CN=fab_admins,OU=groups,DC=example,dc=org": ["Admin"],
     }
 
-    # the LDAP user attribute which has their role DNs
+    # a mapping from OpenLDAP DN to a list of FAB roles
+    AUTH_ROLES_MAPPING = {
+        "cn=fab_users,ou=groups,dc=example,dc=org": ["User"],
+        "cn=fab_admins,ou=groups,dc=example,dc=org": ["Admin"],
+    }
+
+    # the LDAP user attribute which has their role DNs, default is "memberOf"
     AUTH_LDAP_GROUP_FIELD = "memberOf"
 
     # if we should replace ALL the user's roles each login, or only on registration
@@ -148,18 +165,27 @@ You can give FlaskAppBuilder roles based on LDAP roles (note, this requires AUTH
     # force users to re-auth after 30min of inactivity (to keep roles in sync)
     PERMANENT_SESSION_LIFETIME = 1800
 
+TLS
+~~~
+
+For STARTTLS, configure an `ldap://` server and set `AUTH_LDAP_USE_TLS` to `True`::
+
+    AUTH_LDAP_SERVER = "ldap://ldap.example.com"
+    AUTH_LDAP_USE_TLS = True
+
+For LDAP over TLS (ldaps), configure the server with the `ldaps://` scheme and set `AUTH_LDAP_USE_TLS` to `False`::
+
+    AUTH_LDAP_SERVER = "ldaps://ldap.example.com"
+    AUTH_LDAP_USE_TLS = False
+
+Additional LDAP/TLS Options, including CA certificate settings and client authentication, can be found in the :doc:`config`.
+
 Authentication: OAuth
 ---------------------
 
-This method will authenticate the user's credentials against an OAUTH provider.
+This method will authenticate the user's credentials against an OAuth provider.
 
-WARNING: To use OAuth you need to install `Python AuthLib <https://authlib.org>`_.
-
-By using this method it is possible to use the OAUTH provider's APIs, this is because you're requesting the user to give
-permission to manage the user's account on the provider.
-Therefore, you can send tweets, post on the users Facebook, retrieve the user's LinkedIn profile etc.
-Take a look at the `example <https://github.com/dpgaspar/Flask-AppBuilder/tree/master/examples/oauth>`_
-to get an idea of a simple use for this.
+.. note:: To use OAuth you need to install `Python AuthLib <https://authlib.org>`_.
 
 Specify a list of OAUTH_PROVIDERS in **config.py** that you want to allow for your users::
 
@@ -171,61 +197,170 @@ Specify a list of OAUTH_PROVIDERS in **config.py** that you want to allow for yo
 
     # the list of providers which the user can choose from
     OAUTH_PROVIDERS = [
-        {'name':'twitter', 'icon':'fa-twitter',
-            'token_key':'oauth_token',
-            'remote_app': {
-                'client_id':'TWITTER_KEY',
-                'client_secret':'TWITTER_SECRET',
-                'api_base_url':'https://api.twitter.com/1.1/',
-                'request_token_url':'https://api.twitter.com/oauth/request_token',
-                'access_token_url':'https://api.twitter.com/oauth/access_token',
-                'authorize_url':'https://api.twitter.com/oauth/authenticate'}
+        {
+            "name": "twitter",
+            "icon": "fa-twitter",
+            "token_key": "oauth_token",
+            "remote_app": {
+                "client_id": "TWITTER_KEY",
+                "client_secret": "TWITTER_SECRET",
+                "api_base_url": "https://api.twitter.com/1.1/",
+                "request_token_url": "https://api.twitter.com/oauth/request_token",
+                "access_token_url": "https://api.twitter.com/oauth/access_token",
+                "authorize_url": "https://api.twitter.com/oauth/authenticate",
+            },
         },
-        {'name':'google', 'icon':'fa-google',
-            'token_key':'access_token',
-            'remote_app': {
-                'client_id':'GOOGLE_KEY',
-                'client_secret':'GOOGLE_SECRET',
-                'api_base_url':'https://www.googleapis.com/oauth2/v2/',
-                'client_kwargs':{
-                  'scope': 'email profile'
-                },
-                'request_token_url':None,
-                'access_token_url':'https://accounts.google.com/o/oauth2/token',
-                'authorize_url':'https://accounts.google.com/o/oauth2/auth'}
+        {
+            "name": "google",
+            "icon": "fa-google",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "GOOGLE_KEY",
+                "client_secret": "GOOGLE_SECRET",
+                "api_base_url": "https://www.googleapis.com/oauth2/v2/",
+                "client_kwargs": {"scope": "email profile"},
+                "request_token_url": None,
+                "access_token_url": "https://accounts.google.com/o/oauth2/token",
+                "authorize_url": "https://accounts.google.com/o/oauth2/auth",
+                "jwks_uri": "https://www.googleapis.com/oauth2/v3/certs",
+            },
         },
-        {'name':'openshift', 'icon':'fa-circle-o',
-            'token_key':'access_token',
-            'remote_app': {
-                'client_id':'system:serviceaccount:mynamespace:mysa',
-                'client_secret':'<mysa serviceaccount token here>',
-                'api_base_url':'https://openshift.default.svc.cluster.local:443',
-                'client_kwargs':{
-                  'scope': 'user:info'
+        {
+            "name": "openshift",
+            "icon": "fa-circle-o",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "system:serviceaccount:mynamespace:mysa",
+                "client_secret": "<mysa serviceaccount token here>",
+                "api_base_url": "https://openshift.default.svc.cluster.local:443",
+                "client_kwargs": {"scope": "user:info"},
+                "redirect_uri": "https://myapp-mynamespace.apps.<cluster_domain>",
+                "access_token_url": "https://oauth-openshift.apps.<cluster_domain>/oauth/token",
+                "authorize_url": "https://oauth-openshift.apps.<cluster_domain>/oauth/authorize",
+                "token_endpoint_auth_method": "client_secret_post",
+            },
+        },
+        {
+            "name": "okta",
+            "icon": "fa-circle-o",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "OKTA_KEY",
+                "client_secret": "OKTA_SECRET",
+                "api_base_url": "https://OKTA_DOMAIN.okta.com/oauth2/v1/",
+                "client_kwargs": {"scope": "openid profile email groups"},
+                "access_token_url": "https://OKTA_DOMAIN.okta.com/oauth2/v1/token",
+                "authorize_url": "https://OKTA_DOMAIN.okta.com/oauth2/v1/authorize",
+                "server_metadata_url": "https://OKTA_DOMAIN.okta.com/.well-known/openid-configuration",
+            },
+        },
+        {
+            "name": "auth0",
+            "icon": "fa-shield-halved",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "AUTH0_KEY",
+                "client_secret": "AUTH0_SECRET",
+                "api_base_url": "https://AUTH0_DOMAIN/oauth2/v1/",
+                "client_kwargs": {"scope": "openid profile email groups"},
+                "access_token_url": "https://AUTH0_DOMAIN/oauth/token",
+                "authorize_url": "https://AUTH0_DOMAIN/authorize",
+                "server_metadata_url": "https://AUTH0_DOMAIN/.well-known/openid-configuration",
+            },
+        },
+        {
+            "name": "aws_cognito",
+            "icon": "fa-amazon",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "COGNITO_CLIENT_ID",
+                "client_secret": "COGNITO_CLIENT_SECRET",
+                "api_base_url": "https://COGNITO_APP.auth.REGION.amazoncognito.com/",
+                "client_kwargs": {"scope": "openid email aws.cognito.signin.user.admin"},
+                "access_token_url": "https://COGNITO_APP.auth.REGION.amazoncognito.com/token",
+                "authorize_url": "https://COGNITO_APP.auth.REGION.amazoncognito.com/authorize",
+            },
+        },
+        {
+            "name": "keycloak",
+            "icon": "fa-key",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "KEYCLOAK_CLIENT_ID",
+                "client_secret": "KEYCLOAK_CLIENT_SECRET",   
+                "api_base_url": "https://KEYCLOAK_DOMAIN/realms/master/protocol/openid-connect",
+                "client_kwargs": {
+                    "scope": "email profile"
                 },
-                'redirect_uri':'https://myapp-mynamespace.apps.<cluster_domain>',
-                'access_token_url':'https://oauth-openshift.apps.<cluster_domain>/oauth/token',
-                'authorize_url':'https://oauth-openshift.apps.<cluster_domain>/oauth/authorize',
-                'token_endpoint_auth_method':'client_secret_post'}
-        },{'name': 'okta', 'icon': 'fa-circle-o',
-            'token_key': 'access_token',
-            'remote_app': {
-                'client_id': 'OKTA_KEY',
-                'client_secret': 'OKTA_SECRET',
-                'api_base_url': 'https://OKTA_DOMAIN.okta.com/oauth2/v1/',
-                'client_kwargs': {
-                    'scope': 'openid profile email groups'
+                "access_token_url": "KEYCLOAK_DOMAIN/realms/master/protocol/openid-connect/token",
+                "authorize_url": "KEYCLOAK_DOMAIN/realms/master/protocol/openid-connect/auth",
+                "request_token_url": None,
+            },
+        },
+        {
+            "name": "keycloak_before_17",
+            "icon": "fa-key",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "KEYCLOAK_CLIENT_ID",
+                "client_secret": "KEYCLOAK_CLIENT_SECRET",   
+                "api_base_url": "https://KEYCLOAK_DOMAIN/auth/realms/master/protocol/openid-connect",
+                "client_kwargs": {
+                    "scope": "email profile"
                 },
-                'access_token_url': 'https://OKTA_DOMAIN.okta.com/oauth2/v1/token',
-                'authorize_url': 'https://OKTA_DOMAIN.okta.com/oauth2/v1/authorize',
-        }
+                "access_token_url": "KEYCLOAK_DOMAIN/auth/realms/master/protocol/openid-connect/token",
+                "authorize_url": "KEYCLOAK_DOMAIN/auth/realms/master/protocol/openid-connect/auth",
+                "request_token_url": None,
+            },
+        },
+        {
+            "name": "azure",
+            "icon": "fa-windows",
+            "token_key": "access_token",
+            "remote_app": {
+                "client_id": "AZURE_APPLICATION_ID",
+                "client_secret": "AZURE_SECRET",
+                "api_base_url": "https://login.microsoftonline.com/AZURE_TENANT_ID/oauth2",
+                "client_kwargs": {
+                    "scope": "User.read name preferred_username email profile upn",
+                    "resource": "AZURE_APPLICATION_ID",
+                    # Recommended: verify Azure JWT signature
+                    "verify_signature": True
+                },
+                "request_token_url": None,
+                "access_token_url": "https://login.microsoftonline.com/AZURE_TENANT_ID/oauth2/token",
+                "authorize_url": "https://login.microsoftonline.com/AZURE_TENANT_ID/oauth2/authorize",
+            },
+        },
+        {
+            "name": "authentik",
+            "token_key": "access_token",
+            "icon": "fa-fingerprint",
+            "remote_app": {
+                "api_base_url": "https://authentik.mydomain.com",
+                "client_kwargs": {
+                    "scope": "email profile",
+                    "verify_signature": True,
+                },
+                "access_token_url": (
+                    "https://authentik.mydomain.com/application/o/token/"
+                ),
+                "authorize_url": (
+                    "https://authentik.mydomain.com/application/o/authorize/"
+                ),
+                "request_token_url": None,
+                "client_id": "CLIENT_ID",
+                "client_secret": "CLIENT_SECRET",
+                'jwks_uri': 'https://authentik.mydomain.com/application/o/APPLICATION_NAME/jwks/',
+            },
+        },
     ]
 
 This needs a small explanation, you basically have five special keys:
 
 :name: the name of the provider:
     you can choose whatever you want, but FAB has builtin logic in `BaseSecurityManager.get_oauth_user_info()` for:
-    'azure', 'github', 'google', 'linkedin', 'okta', 'openshift', 'twitter'
+    'authentik', 'azure', 'github', 'google', 'keycloak', 'keycloak_before_17', 'linkedin', 'okta', 'openshift', 'twitter'
 
 :icon: the font-awesome icon for this provider
 
@@ -237,7 +372,7 @@ This needs a small explanation, you basically have five special keys:
 
 You can give FlaskAppBuilder roles based on Oauth groups::
 
-    # note, this is only natively supported in `okta` currently,
+    # note, this is only natively supported in `azure` and `okta` currently,
     # however, if you customize userinfo retrieval to include 'role_keys', this will work for other providers
 
     # a mapping from the values of `userinfo["role_keys"]` to a list of FAB roles
@@ -255,10 +390,13 @@ You can give FlaskAppBuilder roles based on Oauth groups::
 To customize the userinfo retrieval, you can create your own method like this::
 
     @appbuilder.sm.oauth_user_info_getter
-    def my_user_info_getter(sm, provider, response=None):
+    def my_user_info_getter(
+        sm: SecurityManager,
+        provider: str,
+        response: Dict[str, Any]
+    ) -> Dict[str, Any]:
         if provider == "okta":
             me = sm.oauth_remotes[provider].get("userinfo")
-            log.debug("User info from Okta: {0}".format(me.data))
             return {
                 "username": "okta_" + me.data.get("sub", ""),
                 "first_name": me.data.get("given_name", ""),
@@ -266,13 +404,289 @@ To customize the userinfo retrieval, you can create your own method like this::
                 "email": me.data.get("email", ""),
                 "role_keys": me.data.get("groups", []),
             }
-        else:
-            return {}
+        if provider == "aws_cognito":
+            me = self.appbuilder.sm.oauth_remotes[provider].get("userInfo")
+            return {
+                "username": me.json().get("username"),
+                "email": me.json().get("email"),
+                "first_name": me.json().get("given_name", ""),
+                "last_name": me.json().get("family_name", ""),
+                "role_keys": ["User"], # set AUTH_ROLES_SYNC_AT_LOGIN = False
+            }
+        return {}
+
+On Flask-AppBuilder 3.4.0 the login page has changed.
+
+With one provider:
+
+.. image:: ./images/oauth_login_one_provider.png
+    :width: 100%
+
+With multiple providers:
+
+.. image:: ./images/oauth_login.png
+    :width: 100%
+
+Note that on 3.3.X the user would automatically be sent to the provider allow page.
 
 Decorate your method with the SecurityManager **oauth_user_info_getter** decorator.
-Your method should return a dictionary with the userinfo, the keys having the same column names as the User Model.
+Your method should return a dictionary with the userinfo, with the keys having the same column names as the User Model.
 Your method will be called after the user authorizes your application on the OAuth provider.
 Take a look at the `example <https://github.com/dpgaspar/Flask-AppBuilder/tree/master/examples/oauth>`_
+
+You can also use the OAuth provider APIs.
+Therefore, you can send tweets, post on the users Facebook, retrieve the user's LinkedIn profile etc.
+Take a look at the `example <https://github.com/dpgaspar/Flask-AppBuilder/tree/master/examples/oauth>`_
+to get an idea of a simple use for this.
+
+Authentication: SAML
+--------------------
+
+This method will authenticate users via SAML 2.0 identity providers such as
+Microsoft Entra ID (formerly Azure AD), Okta, OneLogin, etc.
+
+.. note:: To use SAML you need to install `python3-saml <https://github.com/SAML-Toolkits/python3-saml>`_:
+   ``pip install flask-appbuilder[saml]``
+
+Configure your SAML providers and SP settings in **config.py**::
+
+    AUTH_TYPE = AUTH_SAML
+
+    # registration configs
+    AUTH_USER_REGISTRATION = True
+    AUTH_USER_REGISTRATION_ROLE = "Public"
+
+    # Sync roles at login from SAML assertion
+    AUTH_ROLES_SYNC_AT_LOGIN = True
+
+    # Map SAML group names to FAB roles
+    AUTH_ROLES_MAPPING = {
+        "admins": ["Admin"],
+        "users": ["Public"],
+    }
+
+    # SAML Identity Providers
+    SAML_PROVIDERS = [
+        {
+            "name": "entra_id",
+            "icon": "fa-microsoft",
+            "idp": {
+                "entityId": "https://sts.windows.net/<TENANT_ID>/",
+                "singleSignOnService": {
+                    "url": "https://login.microsoftonline.com/<TENANT_ID>/saml2",
+                    "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+                },
+                "singleLogoutService": {
+                    "url": "https://login.microsoftonline.com/<TENANT_ID>/saml2",
+                    "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+                },
+                "x509cert": "<IDP_CERTIFICATE_BASE64>",
+            },
+            "attribute_mapping": {
+                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress": "email",
+                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname": "first_name",
+                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname": "last_name",
+                "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name": "username",
+                "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups": "role_keys",
+            },
+        },
+    ]
+
+    # Global SAML Service Provider configuration
+    SAML_CONFIG = {
+        "strict": True,
+        "debug": False,
+        "sp": {
+            "entityId": "https://myapp.example.com/saml/metadata/",
+            "assertionConsumerService": {
+                "url": "https://myapp.example.com/saml/acs/",
+                "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST",
+            },
+            "singleLogoutService": {
+                "url": "https://myapp.example.com/saml/slo/",
+                "binding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
+            },
+            "NameIDFormat": "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
+            "x509cert": "",
+            # "privateKey": "",
+        },
+        "security": {
+            "nameIdEncrypted": False,
+            "authnRequestsSigned": False,
+            "logoutRequestSigned": False,
+            "logoutResponseSigned": False,
+            "signMetadata": False,
+            "wantMessagesSigned": False,
+            "wantAssertionsSigned": True,
+            "wantAssertionsEncrypted": False,
+            "wantNameId": True,
+            "wantNameIdEncrypted": False,
+            "wantAttributeStatement": True,
+        },
+    }
+
+Each SAML provider entry has the following keys:
+
+:name: A unique name for the identity provider.
+:icon: A Font Awesome icon class for the login button.
+:idp: The IdP SAML metadata (entityId, SSO/SLO URLs, and signing certificate).
+:attribute_mapping: Maps SAML assertion attribute names (left) to FAB user fields (right).
+    Supported FAB fields: ``username``, ``email``, ``first_name``, ``last_name``, ``role_keys``.
+
+The ``SAML_CONFIG`` dict holds the global Service Provider settings. The ``sp`` section defines
+your application's SAML endpoints. These URLs must match what you configure on the IdP side.
+
+SAML Endpoints
+~~~~~~~~~~~~~~
+
+The following endpoints are automatically registered:
+
+- ``/login/`` — Login page with IdP selection (or auto-redirect for single IdP)
+- ``/login/<idp>`` — Initiate SSO with a specific IdP
+- ``/saml/acs/`` — Assertion Consumer Service (receives SAML responses)
+- ``/saml/slo/`` — Single Logout endpoint
+- ``/saml/metadata/`` — SP metadata XML (configure this URL on your IdP)
+
+SAML Role Mapping
+~~~~~~~~~~~~~~~~~
+
+You can map SAML group claims to FAB roles, just like with OAuth and LDAP::
+
+    AUTH_ROLES_MAPPING = {
+        "admins": ["Admin"],
+        "users": ["User"],
+    }
+
+    AUTH_ROLES_SYNC_AT_LOGIN = True
+
+    PERMANENT_SESSION_LIFETIME = 1800
+
+The ``role_keys`` field in ``attribute_mapping`` defines which SAML attribute contains the
+user's group memberships.
+
+You can also use JMESPath expressions for dynamic role assignment::
+
+    AUTH_USER_REGISTRATION_ROLE_JMESPATH = "role_keys[0]"
+
+Take a look at the `SAML example <https://github.com/dpgaspar/Flask-AppBuilder/tree/master/examples/saml>`_
+
+
+.. _dynamic-role-mapping:
+
+Dynamic role mapping
+--------------------
+
+``AUTH_ROLES_MAPPING`` is normally a static dict, which means that mapping a newly created
+role to an identity provider group requires a configuration change and an application restart.
+Flask-AppBuilder offers two ways of keeping that mapping dynamic, both of which work for
+LDAP, OAuth and SAML.
+
+Using a callable
+~~~~~~~~~~~~~~~~
+
+``AUTH_ROLES_MAPPING`` can be a callable taking no arguments and returning the mapping dict.
+It is resolved on every authentication, so the mapping can be stored anywhere you like
+(your own database table, a remote service, a file) and changed at runtime::
+
+    def get_roles_mapping():
+        # fetch the mapping from wherever you keep it
+        return {
+            "admin-group": ["Admin"],
+            "user-group": ["User"],
+        }
+
+    AUTH_ROLES_MAPPING = get_roles_mapping
+
+Combine it with ``AUTH_ROLES_SYNC_AT_LOGIN = True`` so that existing users pick up the new
+mapping on their next login.
+
+.. note:: If the callable does not return a dict, an error is logged and no roles are mapped.
+          Keep the callable cheap: it runs on every authentication, and may be called more
+          than once per authentication.
+
+Using groups
+~~~~~~~~~~~~
+
+Flask-AppBuilder groups already hold a list of roles, and a user's effective roles are the
+union of their own roles and the roles of all their groups. Setting
+``AUTH_GROUPS_SYNC_AT_LOGIN = True`` makes FAB match the identity provider's group names
+against the FAB group names on every login, and update the user's groups accordingly::
+
+    AUTH_GROUPS_SYNC_AT_LOGIN = True
+
+With this enabled, the group to role relationship lives entirely on the database. An
+administrator can bind a brand new role to a group from the UI or the API, and it takes
+effect on the next login, with no configuration change and no restart.
+
+The group names are read from:
+
+- LDAP: the user attribute set by ``AUTH_LDAP_GROUP_FIELD`` (default ``memberOf``), the same
+  source used by ``AUTH_ROLES_MAPPING``
+- OAuth and SAML: the ``groups`` key of the userinfo payload, falling back to ``role_keys``
+  when ``groups`` is not set, so providers already exposing their groups for
+  ``AUTH_ROLES_MAPPING`` work unchanged
+
+Identity provider groups with no matching FAB group are ignored, and a warning is logged.
+To have them created automatically, set::
+
+    AUTH_AUTO_CREATE_GROUPS = True
+
+They are created without any role, so logging in once makes the group show up in the UI
+ready for an administrator to bind roles to it.
+
+.. note:: ``AUTH_GROUPS_SYNC_AT_LOGIN`` and ``AUTH_ROLES_MAPPING`` are independent and can be
+          used together. Groups are also assigned when a user is registered for the first time.
+
+Authentication: Rate limiting
+-----------------------------
+
+To prevent brute-forcing of credentials, you can apply rate limits to AuthViews in 4.2.0, so that
+only 10 POST requests can be made every 20 seconds. This can be enabled by setting
+``AUTH_RATE_LIMITED`` and ``RATELIMIT_ENABLED`` to ``True``.
+The rate can be changed by adjusting ``AUTH_RATE_LIMIT`` to, for example, ``1 per 10 seconds``. Take a look
+at the `documentation <https://flask-limiter.readthedocs.io/en/stable/>`_ of Flask-Limiter for more options and
+examples.
+
+Authentication: API Keys
+------------------------
+
+FAB supports API key authentication as an alternative to JWT tokens. API keys are long-lived
+credentials that can be used for service-to-service communication or automation.
+
+**Enabling API Key Authentication**
+
+Set the following in your config::
+
+    FAB_API_KEY_ENABLED = True
+
+**Creating API Keys**
+
+API keys are managed through the ``SecurityManager``. You can create keys programmatically::
+
+    from flask import current_app
+
+    sm = current_app.appbuilder.sm
+    api_key = sm.create_api_key(user=user, name="my-service-key")
+
+The returned key string should be stored securely -- it cannot be retrieved again after creation.
+
+**Using API Keys**
+
+Pass the API key as a Bearer token in the ``Authorization`` header::
+
+    $ curl http://localhost:8080/api/v1/example/private \
+      -H "Authorization: Bearer sst_<YOUR_API_KEY>"
+
+API keys use the same permission system as regular users. The key inherits the roles and
+permissions of the user it belongs to.
+
+**Configuration Options**
+
+The following configuration options are available:
+
+- ``FAB_API_KEY_ENABLED`` -- Set to ``True`` to enable API key authentication (default: ``False``).
+- ``FAB_API_KEY_PREFIXES`` -- List of prefixes that identify API keys vs JWT tokens
+  (default: ``["sst_"]``).
 
 Role based
 ----------
@@ -383,7 +797,7 @@ use the ``@has_access`` decorator::
 
     class MyModelView(ModelView):
         datamodel = SQLAInterface(Group)
-    	
+
         @has_access
         @expose('/mymethod/')
         def mymethod(self):
@@ -393,7 +807,7 @@ use the ``@has_access`` decorator::
 The framework will create the following access, based on your method's name:
 
 - can mymethod on MyModelView
-	
+
 You can aggregate some of your method's on a single permission, this can simplify the security configuration
 if there is no need for granular permissions on a group of methods, for this use ``@permission_name`` decorator.
 
@@ -602,6 +1016,39 @@ exclude them from add and edit form. Using our example you will define our view 
         edit_columns = ['name']
 
 
+Password complexity validation
+------------------------------
+
+This feature only makes sense when using AUTH database.
+By default you can enable password complexity validation by setting `FAB_PASSWORD_COMPLEXITY_ENABLED = True`.
+
+This default enforces:
+
+- At least 2 Uppercase letters
+- At least 3 Lowercase letters
+- At least 1 special character
+- At least 2 numeric digits
+- At least 10 total characters
+
+
+If you want to set your own password complexity validation, you can write your own validation function:
+
+Example on your config::
+
+    from flask_appbuilder.exceptions import PasswordComplexityValidationError
+    ...
+
+    def custom_password_validator(password: str) -> None:
+        """
+        A simplistic example for a password validator
+        """
+        if len(password) < 8:
+            raise PasswordComplexityValidationError("Must have at least 8 characters")
+
+    FAB_PASSWORD_COMPLEXITY_VALIDATOR = custom_password_validator
+    FAB_PASSWORD_COMPLEXITY_ENABLED = True
+
+
 Your Custom Security
 --------------------
 
@@ -641,8 +1088,10 @@ This is a must have if your using the factory app pattern, on the config declare
 F.A.B. uses a different user view for each authentication method
 
 :UserDBModelView: For database auth method
-:UserOIDModelView: For Open ID auth method
 :UserLDAPModelView: For LDAP auth method
+:UserOAuthModelView: For OAuth auth method
+:UserRemoteUserModelView: For Remote User auth method
+:UserSAMLModelView: For SAML auth method
 
 You can extend or create from scratch your own, and then tell F.A.B. to use them instead, by overriding their
 correspondent lower case properties on **SecurityManager** (just like on the given example).
@@ -669,19 +1118,19 @@ First extend the User Model (create a sec_models.py file)::
         extra = Column(String(256))
 
 
-Next define a new User view, just like the default User view but with the extra column (create a sec_view.py)
+Next define a new User view, just like the default User view but with the extra column (create a sec_views.py)
 If you're using:
 
 :AUTH_DB: Extend UserDBModelView
 :AUTH_LDAP: Extend UserLDAPModelView
 :AUTH_REMOTE_USER: Extend UserRemoteUserModelView
-:AUTH_OID: Extend UserOIDModelView
 :AUTH_OAUTH: Extend UserOAuthModelView
+:AUTH_SAML: Extend UserSAMLModelView
 
 So using AUTH_DB::
 
     from flask_appbuilder.security.views import UserDBModelView
-    from flask_babelpkg import lazy_gettext
+    from flask_babel import lazy_gettext
 
     class MyUserDBModelView(UserDBModelView):
         """
@@ -751,7 +1200,8 @@ Note that this is for AUTH_DB, so if you're using:
 :AUTH_DB: Override userdbmodelview
 :AUTH_LDAP: Override userldapmodelview
 :AUTH_REMOTE_USER: Override userremoteusermodelview
-:AUTH_OID: Override useroidmodelview
+:AUTH_OAUTH: Override useroauthmodelview
+:AUTH_SAML: Override usersamlmodelview
 
 Finally (as shown on the previous example) tell F.A.B. to use your SecurityManager class, so when initializing
 **AppBuilder** (on __init__.py)::
@@ -774,3 +1224,23 @@ Some images:
 
 .. image:: ./images/security.png
     :width: 100%
+
+Optional dependency Flask-Talisman
+==================================
+
+All javascript code and inline scripts can have a nonce attribute provided by Flask-Talisman.
+This package will not initialize Flask-Talisman for you, but will use `csp_nonce()` on Jinja2 if it exists.
+To initialize Flask-Talisman, you can do the following:
+
+.. code-block:: python
+
+    from flask import Flask
+    from flask_appbuilder import AppBuilder
+    from flask_talisman import Talisman
+
+    app = Flask(__name__)
+    app.config.from_object('config')
+    db = SQLA(app)
+    appbuilder = AppBuilder(app, db.session)
+
+    Talisman(app)

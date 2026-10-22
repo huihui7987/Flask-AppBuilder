@@ -2,7 +2,6 @@ from flask_babel import lazy_gettext
 
 from ..filters import BaseFilter, BaseFilterConverter
 
-
 __all__ = [
     "GenericFilterConverter",
     "FilterNotContains",
@@ -78,8 +77,8 @@ class FilterStartsWith(BaseFilter):
 
 class GenericFilterConverter(BaseFilterConverter):
     """
-        Class for converting columns into a supported list of filters
-        specific for SQLAlchemy.
+    Class for converting columns into a supported list of filters
+    specific for SQLAlchemy.
 
     """
 
@@ -107,6 +106,14 @@ class GenericFilterConverter(BaseFilterConverter):
                 FilterStartsWith,
             ],
         ),
-        ("is_integer", [FilterEqual, FilterNotEqual, FilterGreater, FilterSmaller]),
+        (
+            "is_integer",
+            [
+                FilterEqual,
+                FilterNotEqual,
+                FilterGreater,
+                FilterSmaller,
+            ],
+        ),
         ("is_date", [FilterEqual, FilterNotEqual, FilterGreater, FilterSmaller]),
     )

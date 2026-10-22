@@ -2,7 +2,6 @@ __author__ = "dpgaspar"
 
 from datetime import date, datetime
 import operator
-import os
 
 from ..._compat import with_metaclass
 
@@ -35,13 +34,13 @@ class GenericColumn(object):
 
 class MetaGenericModel(type):
     """
-        Meta class for GenericModel
-        will change default properties:
-        - instantiates internal '_col_defs' dict with
-            all the defined columns.
-        - Define pk property with the name of the primary key column
-        - Define properties with a list of all column's properties
-        - Define columns with a list of all column's name
+    Meta class for GenericModel
+    will change default properties:
+    - instantiates internal '_col_defs' dict with
+        all the defined columns.
+    - Define pk property with the name of the primary key column
+    - Define properties with a list of all column's properties
+    - Define columns with a list of all column's name
     """
 
     pk = None
@@ -68,18 +67,18 @@ class MetaGenericModel(type):
 
 class GenericModel(with_metaclass(MetaGenericModel, object)):
     """
-        Generic Model class to define generic purpose models to use
-        with the framework.
+    Generic Model class to define generic purpose models to use
+    with the framework.
 
-        Use GenericSession much like SQLAlchemy's Session Class.
-        Extend GenericSession to implement specific engine features.
+    Use GenericSession much like SQLAlchemy's Session Class.
+    Extend GenericSession to implement specific engine features.
 
-        Define your models like::
+    Define your models like::
 
-            class MyGenericModel(GenericModel):
-                id = GenericColumn(int, primary_key=True)
-                age = GenericColumn(int)
-                name = GenericColumn(str)
+        class MyGenericModel(GenericModel):
+            id = GenericColumn(int, primary_key=True)
+            age = GenericColumn(int)
+            name = GenericColumn(str)
 
     """
 
@@ -111,13 +110,13 @@ class GenericModel(with_metaclass(MetaGenericModel, object)):
 
 class GenericSession(object):
     """
-        This class is a base, you should subclass it
-        to implement your own generic data source.
+    This class is a base, you should subclass it
+    to implement your own generic data source.
 
-        Override at least the **all** method.
+    Override at least the **all** method.
 
-        **GenericSession** will implement filter and orders
-        based on your data generation on the **all** method.
+    **GenericSession** will implement filter and orders
+    based on your data generation on the **all** method.
     """
 
     def __init__(self):
@@ -131,20 +130,20 @@ class GenericSession(object):
 
     def clear(self):
         """
-            Deletes the entire store
+        Deletes the entire store
         """
         self.store = dict()
 
     def delete_all(self, model_cls):
         """
-            Deletes all objects of type model_cls
+        Deletes all objects of type model_cls
         """
         self.store[model_cls._name] = []
 
     def get(self, pk):
         """
-            Returns the object for the key
-            Override it for efficiency.
+        Returns the object for the key
+        Override it for efficiency.
         """
         for item in self.store.get(self.query_class):
             # coverts pk value to correct type
@@ -154,7 +153,7 @@ class GenericSession(object):
 
     def query(self, model_cls):
         """
-            SQLAlchemy query like method
+        SQLAlchemy query like method
         """
         self._filters_cmd = list()
         self.query_filters = list()
@@ -350,8 +349,8 @@ class GenericSession(object):
 
     def all(self):
         """
-            SQLA like 'all' method, will populate all rows and apply all
-            filters and orders to it.
+        SQLA like 'all' method, will populate all rows and apply all
+        filters and orders to it.
         """
         items = list()
         if not self._filters_cmd:
@@ -378,53 +377,3 @@ class GenericSession(object):
         if not cls_list:
             self.store[model_cls_name] = []
         self.store[model_cls_name].append(model)
-
-
-# -------------------------------------
-#   Example of an Generic Data Source
-# -------------------------------------
-class PSModel(GenericModel):
-    UID = GenericColumn(str)
-    PID = GenericColumn(int, primary_key=True)
-    PPID = GenericColumn(int)
-    C = GenericColumn(int)
-    STIME = GenericColumn(str)
-    TTY = GenericColumn(str)
-    TIME = GenericColumn(str)
-    CMD = GenericColumn(str)
-
-
-class PSSession(GenericSession):
-    regexp = (
-        "(\w+) +(\w+) +(\w+) +(\w+) +(\w+:\w+|\w+) (\?|tty\w+) +(\w+:\w+:\w+) +(.+)\n"
-    )
-
-    def add_object(self, line):
-        import re
-
-        group = re.findall(self.regexp, line)
-        if group:
-            model = PSModel()
-            model.UID = group[0][0]
-            model.PID = int(group[0][1])
-            model.PPID = int(group[0][2])
-            model.C = int(group[0][3])
-            model.STIME = group[0][4]
-            model.TTY = group[0][5]
-            model.TIME = group[0][6]
-            model.CMD = group[0][7]
-            self.add(model)
-
-    def get(self, pk):
-        self.delete_all(PSModel())
-        out = os.popen("ps -p {0} -f".format(pk))
-        for line in out.readlines():
-            self.add_object(line)
-        return super(PSSession, self).get(pk)
-
-    def all(self):
-        self.delete_all(PSModel())
-        out = os.popen("ps -ef")
-        for line in out.readlines():
-            self.add_object(line)
-        return super(PSSession, self).all()

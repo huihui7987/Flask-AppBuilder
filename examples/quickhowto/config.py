@@ -1,5 +1,8 @@
 import os
 
+from flask_appbuilder.const import AUTH_DB
+from flask_appbuilder.exceptions import PasswordComplexityValidationError
+
 basedir = os.path.abspath(os.path.dirname(__file__))
 
 CSRF_ENABLED = True
@@ -15,7 +18,7 @@ OPENID_PROVIDERS = [
 
 SQLALCHEMY_DATABASE_URI = "sqlite:///" + os.path.join(basedir, "app.db")
 # SQLALCHEMY_DATABASE_URI = 'mysql://username:password@mysqlserver.local/quickhowto'
-# SQLALCHEMY_DATABASE_URI = 'postgresql://scott:tiger@localhost:5432/myapp'
+# SQLALCHEMY_DATABASE_URI = 'postgresql+psycopg2://pguser:pguserpassword@127.0.0.1:5432/app'
 # SQLALCHEMY_ECHO = True
 SQLALCHEMY_POOL_RECYCLE = 3
 
@@ -36,13 +39,27 @@ LANGUAGES = {
 }
 
 FAB_API_MAX_PAGE_SIZE = 100
+
+
+def custom_password_validator(password: str) -> None:
+    """
+    A simplistic example for a password validator
+    """
+    if len(password) < 8:
+        raise PasswordComplexityValidationError("Must have at least 8 characters")
+
+
+# FAB_PASSWORD_COMPLEXITY_VALIDATOR = custom_password_validator
+
+FAB_PASSWORD_COMPLEXITY_ENABLED = False
+
 # ------------------------------
 # GLOBALS FOR GENERAL APP's
 # ------------------------------
 UPLOAD_FOLDER = basedir + "/app/static/uploads/"
 IMG_UPLOAD_FOLDER = basedir + "/app/static/uploads/"
 IMG_UPLOAD_URL = "/static/uploads/"
-AUTH_TYPE = 1
+AUTH_TYPE = AUTH_DB
 # AUTH_LDAP_SERVER = "ldap://dc.domain.net"
 AUTH_ROLE_ADMIN = "Admin"
 AUTH_ROLE_PUBLIC = "Public"

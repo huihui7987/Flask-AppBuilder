@@ -2,9 +2,15 @@ import datetime
 import logging
 
 from dateutil import parser
+from flask import current_app
+from flask_appbuilder.exceptions import ApplyFilterException
+from flask_appbuilder.models.filters import (
+    BaseFilter,
+    BaseFilterConverter,
+    FilterRelation,
+)
 from flask_babel import lazy_gettext
-
-from ..filters import BaseFilter, BaseFilterConverter, FilterRelation
+from sqlalchemy.exc import SQLAlchemyError
 
 log = logging.getLogger(__name__)
 
@@ -15,11 +21,14 @@ __all__ = [
     "FilterNotStartsWith",
     "FilterStartsWith",
     "FilterContains",
+    "FilterNotContains",
     "FilterNotEqual",
     "FilterEndsWith",
     "FilterEqualFunction",
     "FilterGreater",
     "FilterNotEndsWith",
+    "FilterIn",
+    "FilterNotIn",
     "FilterRelationManyToManyEqual",
     "FilterRelationOneToManyEqual",
     "FilterRelationOneToManyNotEqual",
@@ -29,13 +38,13 @@ __all__ = [
 
 def get_field_setup_query(query, model, column_name):
     """
-        Help function for SQLA filters, checks for dot notation on column names.
-        If it exists, will join the query with the model
-        from the first part of the field name.
+    Help function for SQLA filters, checks for dot notation on column names.
+    If it exists, will join the query with the model
+    from the first part of the field name.
 
-        example:
-            Contact.created_by: if created_by is a User model,
-            it will be joined to the query.
+    example:
+        Contact.created_by: if created_by is a User model,
+        it will be joined to the query.
     """
     if not hasattr(model, column_name):
         # it's an inner obj attr
@@ -72,6 +81,9 @@ def set_value_to_type(datamodel, column_name, value):
             return parser.parse(value)
         except Exception:
             return None
+    elif datamodel.is_json(column_name):
+        # For JSON columns, treat as string for filtering
+        return str(value)
     return value
 
 
@@ -178,13 +190,46 @@ class FilterSmaller(BaseFilter):
         return query.filter(field < value)
 
 
+class FilterIn(BaseFilter):
+    name = lazy_gettext("In")
+    arg_name = "in"
+
+    def apply(self, query, value):
+        query, field = get_field_setup_query(query, self.model, self.column_name)
+        typed_values = [
+            set_value_to_type(self.datamodel, self.column_name, v) for v in value
+        ]
+        return query.filter(field.in_(typed_values))
+
+
+class FilterNotIn(BaseFilter):
+    name = lazy_gettext("Not In")
+    arg_name = "not_in"
+
+    def apply(self, query, value):
+        query, field = get_field_setup_query(query, self.model, self.column_name)
+        typed_values = [
+            set_value_to_type(self.datamodel, self.column_name, v) for v in value
+        ]
+        return query.filter(~field.in_(typed_values))
+
+
 class FilterRelationOneToManyEqual(FilterRelation):
     name = lazy_gettext("Relation")
     arg_name = "rel_o_m"
 
     def apply(self, query, value):
         query, field = get_field_setup_query(query, self.model, self.column_name)
-        rel_obj = self.datamodel.get_related_obj(self.column_name, value)
+        try:
+            rel_obj = self.datamodel.get_related_obj(self.column_name, value)
+        except SQLAlchemyError as exc:
+            logging.warning("Filter exception for %s will not apply", field)
+            try:
+                current_app.appbuilder.session.rollback()
+            except SQLAlchemyError:
+                # on MSSQL a rollback would fail here
+                pass
+            raise ApplyFilterException(exception=exc)
         return query.filter(field == rel_obj)
 
 
@@ -194,7 +239,16 @@ class FilterRelationOneToManyNotEqual(FilterRelation):
 
     def apply(self, query, value):
         query, field = get_field_setup_query(query, self.model, self.column_name)
-        rel_obj = self.datamodel.get_related_obj(self.column_name, value)
+        try:
+            rel_obj = self.datamodel.get_related_obj(self.column_name, value)
+        except SQLAlchemyError as exc:
+            log.warning("Filter exception for %s will not apply", field)
+            try:
+                current_app.appbuilder.session.rollback()
+            except SQLAlchemyError:
+                # on MSSQL a rollback would fail here
+                pass
+            raise ApplyFilterException(exception=exc)
         return query.filter(field != rel_obj)
 
 
@@ -207,15 +261,27 @@ class FilterRelationManyToManyEqual(FilterRelation):
         Get object by column_name and value_item, then apply filter if object exists
         Query with new filter applied
         """
-        rel_obj = self.datamodel.get_related_obj(self.column_name, value_item)
+        try:
+            rel_obj = self.datamodel.get_related_obj(self.column_name, value_item)
+        except SQLAlchemyError as exc:
+            logging.warning(
+                "Filter exception for %s with value %s, will not apply",
+                field,
+                value_item,
+            )
+            try:
+                current_app.appbuilder.session.rollback()
+            except SQLAlchemyError:
+                # on MSSQL a rollback would fail here
+                pass
+            raise ApplyFilterException(exception=exc)
 
         if rel_obj:
             return query.filter(field.contains(rel_obj))
         else:
-            log.error(
-                "Related object for column: %s, value: %s return Null",
+            log.warning(
+                "Related object for column: %s returned Null",
                 self.column_name,
-                value_item,
             )
 
         return query
@@ -251,8 +317,8 @@ class FilterInFunction(BaseFilter):
 
 class SQLAFilterConverter(BaseFilterConverter):
     """
-        Class for converting columns into a supported list of filters
-        specific for SQLAlchemy.
+    Class for converting columns into a supported list of filters
+    specific for SQLAlchemy.
 
     """
 
@@ -279,6 +345,8 @@ class SQLAFilterConverter(BaseFilterConverter):
                 FilterNotEndsWith,
                 FilterNotContains,
                 FilterNotEqual,
+                FilterIn,
+                FilterNotIn,
             ],
         ),
         (
@@ -305,12 +373,57 @@ class SQLAFilterConverter(BaseFilterConverter):
                 FilterNotEndsWith,
                 FilterNotContains,
                 FilterNotEqual,
+                FilterIn,
+                FilterNotIn,
             ],
         ),
-        ("is_integer", [FilterEqual, FilterGreater, FilterSmaller, FilterNotEqual]),
-        ("is_float", [FilterEqual, FilterGreater, FilterSmaller, FilterNotEqual]),
-        ("is_numeric", [FilterEqual, FilterGreater, FilterSmaller, FilterNotEqual]),
+        (
+            "is_integer",
+            [
+                FilterEqual,
+                FilterGreater,
+                FilterSmaller,
+                FilterNotEqual,
+                FilterIn,
+                FilterNotIn,
+            ],
+        ),
+        (
+            "is_float",
+            [
+                FilterEqual,
+                FilterGreater,
+                FilterSmaller,
+                FilterNotEqual,
+                FilterIn,
+                FilterNotIn,
+            ],
+        ),
+        (
+            "is_numeric",
+            [
+                FilterEqual,
+                FilterGreater,
+                FilterSmaller,
+                FilterNotEqual,
+                FilterIn,
+                FilterNotIn,
+            ],
+        ),
         ("is_date", [FilterEqual, FilterGreater, FilterSmaller, FilterNotEqual]),
         ("is_boolean", [FilterEqual, FilterNotEqual]),
         ("is_datetime", [FilterEqual, FilterGreater, FilterSmaller, FilterNotEqual]),
+        (
+            "is_json",
+            [
+                FilterStartsWith,
+                FilterEndsWith,
+                FilterContains,
+                FilterEqual,
+                FilterNotStartsWith,
+                FilterNotEndsWith,
+                FilterNotContains,
+                FilterNotEqual,
+            ],
+        ),
     )

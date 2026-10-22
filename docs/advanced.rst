@@ -62,8 +62,6 @@ On this next example we are filtering a view by the logged in user and with colu
     from flask_appbuilder import ModelView
     from flask_appbuilder.models.sqla.interface import SQLAInterface
     from flask_appbuilder.models.sqla.filters import FilterEqualFunction, FilterStartsWith
-    # If you're using Mongo Engine you should import filters like this, everything else is exactly the same
-    # from flask_appbuilder.models.mongoengine.filters import FilterStartsWith, FilterEqualFunction
 
     from .models import MyTable
 
@@ -134,7 +132,7 @@ for example a confirmation field::
     class ContactModelView(ModelView):
         datamodel = SQLAInterface(Contact)
         add_form_extra_fields = {
-            'extra': TextField(gettext('Extra Field'),
+            'extra': StringField(gettext('Extra Field'),
             description=gettext('Extra Field description'),
             widget=BS3TextFieldWidget())
         }
@@ -158,7 +156,7 @@ Next override your field using your new widget::
     class ExampleView(ModelView):
         datamodel = SQLAInterface(ExampleModel)
         edit_form_extra_fields = {
-            'field2': TextField('field2', widget=BS3TextFieldROWidget())
+            'field2': StringField('field2', widget=BS3TextFieldROWidget())
         }
 
 Readonly select fields are a special case, but it's solved in a simpler way::
@@ -177,7 +175,7 @@ Readonly select fields are a special case, but it's solved in a simpler way::
         edit_form_extra_fields = {
             'department':  QuerySelectField(
                                 'Department',
-                                query_factory=department_query,
+                                query_func=department_query,
                                 widget=Select2Widget(extra_classes="readonly")
                            )
         }

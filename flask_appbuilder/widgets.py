@@ -6,19 +6,18 @@ Created on Oct 12, 2013
 
 import logging
 
-from flask.globals import _request_ctx_stack
+from flask import current_app
 
 from ._compat import as_unicode
-
 
 log = logging.getLogger(__name__)
 
 
 class RenderTemplateWidget(object):
     """
-        Base template for every widget
-        Enables the possibility of rendering a template
-         inside a template with run time options
+    Base template for every widget
+    Enables the possibility of rendering a template
+     inside a template with run time options
     """
 
     template = "appbuilder/general/widgets/render.html"
@@ -28,8 +27,7 @@ class RenderTemplateWidget(object):
         self.template_args = kwargs
 
     def __call__(self, **kwargs):
-        ctx = _request_ctx_stack.top
-        jinja_env = ctx.app.jinja_env
+        jinja_env = current_app.jinja_env
 
         template = jinja_env.get_template(self.template)
         args = self.template_args.copy()
@@ -39,12 +37,12 @@ class RenderTemplateWidget(object):
 
 class FormWidget(RenderTemplateWidget):
     """
-        FormWidget
+    FormWidget
 
-        form = None
-        include_cols = []
-        exclude_cols = []
-        fieldsets = []
+    form = None
+    include_cols = []
+    exclude_cols = []
+    fieldsets = []
     """
 
     template = "appbuilder/general/widgets/form.html"
@@ -52,12 +50,12 @@ class FormWidget(RenderTemplateWidget):
 
 class FormVerticalWidget(RenderTemplateWidget):
     """
-        FormWidget
+    FormWidget
 
-        form = None
-        include_cols = []
-        exclude_cols = []
-        fieldsets = []
+    form = None
+    include_cols = []
+    exclude_cols = []
+    fieldsets = []
     """
 
     template = "appbuilder/general/widgets/form_vertical.html"
@@ -65,12 +63,12 @@ class FormVerticalWidget(RenderTemplateWidget):
 
 class FormHorizontalWidget(RenderTemplateWidget):
     """
-        FormWidget
+    FormWidget
 
-        form = None
-        include_cols = []
-        exclude_cols = []
-        fieldsets = []
+    form = None
+    include_cols = []
+    exclude_cols = []
+    fieldsets = []
     """
 
     template = "appbuilder/general/widgets/form_horizontal.html"
@@ -78,12 +76,12 @@ class FormHorizontalWidget(RenderTemplateWidget):
 
 class FormInlineWidget(RenderTemplateWidget):
     """
-        FormWidget
+    FormWidget
 
-        form = None
-        include_cols = []
-        exclude_cols = []
-        fieldsets = []
+    form = None
+    include_cols = []
+    exclude_cols = []
+    fieldsets = []
     """
 
     template = "appbuilder/general/widgets/form_inline.html"
@@ -102,7 +100,7 @@ class SearchWidget(FormWidget):
         return super(SearchWidget, self).__init__(**kwargs)
 
     def __call__(self, **kwargs):
-        """ create dict labels based on form """
+        """create dict labels based on form"""
         """ create dict of form widgets """
         """ create dict of possible filters """
         """ create list of active filters """
@@ -124,16 +122,16 @@ class SearchWidget(FormWidget):
 
 class ShowWidget(RenderTemplateWidget):
     """
-        ShowWidget implements a template as an widget
-        it takes the following arguments
+    ShowWidget implements a template as an widget
+    it takes the following arguments
 
-        pk = None
-        label_columns = []
-        include_columns = []
-        value_columns = []
-        actions = None
-        fieldsets = []
-        modelview_name = ''
+    pk = None
+    label_columns = []
+    include_columns = []
+    value_columns = []
+    actions = None
+    fieldsets = []
+    modelview_name = ''
     """
 
     template = "appbuilder/general/widgets/show.html"
@@ -149,20 +147,20 @@ class ShowVerticalWidget(RenderTemplateWidget):
 
 class ListWidget(RenderTemplateWidget):
     """
-        List Widget implements a Template as an widget.
-        It takes the following arguments
+    List Widget implements a Template as an widget.
+    It takes the following arguments
 
-        label_columns = []
-        include_columns = []
-        value_columns = []
-        order_columns = []
-        page = None
-        page_size = None
-        count = 0
-        pks = []
-        actions = None
-        filters = {}
-        modelview_name = ''
+    label_columns = []
+    include_columns = []
+    value_columns = []
+    order_columns = []
+    page = None
+    page_size = None
+    count = 0
+    pks = []
+    actions = None
+    filters = {}
+    modelview_name = ''
     """
 
     template = "appbuilder/general/widgets/list.html"

@@ -1,12 +1,12 @@
 
 {% macro locale_menu(languages) %}
-{% set locale = session['locale'] %}
+{% set locale = session.get('locale') %}
 {% if not locale %}
     {% set locale = 'en' %}
 {% endif %}
 {% if languages.keys()|length > 1 %}
 <li class="dropdown">
-    <a class="dropdown-toggle" data-toggle="dropdown" href="javascript:void(0)">
+    <a class="dropdown-toggle" data-toggle="dropdown" href="#">
        <div class="f16"><i class="flag {{languages[locale].get('flag')}}"></i><b class="caret"></b>
        </div>
     </a>

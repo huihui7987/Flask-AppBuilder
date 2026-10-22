@@ -3,9 +3,7 @@ from functools import reduce
 import logging
 from typing import Any, Type
 
-from flask_babel import lazy_gettext
-
-from .filters import BaseFilterConverter, Filters
+from flask_appbuilder.models.filters import BaseFilterConverter, Filters
 
 try:
     import enum
@@ -17,35 +15,24 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 
-class BaseInterface(object):
+class BaseInterface:
     """
-        Base class for all data model interfaces.
-        Sub class it to implement your own interface for some data engine.
+    Base class for all data model interfaces.
+    Sub class it to implement your own interface for some data engine.
     """
 
     filter_converter_class = Type[BaseFilterConverter]
     """ when sub classing override with your own custom filter converter """
 
-    """ Messages to display on CRUD Events """
-    add_row_message = lazy_gettext("Added Row")
-    edit_row_message = lazy_gettext("Changed Row")
-    delete_row_message = lazy_gettext("Deleted Row")
-    delete_integrity_error_message = lazy_gettext(
-        "Associated data exists, please delete them first"
-    )
-    add_integrity_error_message = lazy_gettext(
-        "Integrity error, probably unique constraint"
-    )
-    edit_integrity_error_message = lazy_gettext(
-        "Integrity error, probably unique constraint"
-    )
-    general_error_message = lazy_gettext("General Error")
-
-    """ Tuple with message and text with severity type ex: ("Added Row", "info") """
-    message = ()
-
     def __init__(self, obj: Type[Any]):
         self.obj = obj
+
+    # def __getattr__(self, name: str) -> Any:
+    #     """
+    #     Make mypy happy about the injected filters like self.datamodel.FilterEqual
+    #     https://mypy.readthedocs.io/en/latest/cheat_sheet_py3.html#when-you-re-puzzled-or-when-things-are-complicated
+    #     """
+    #     return super().__getattr__(name)
 
     def _get_attr(self, col_name):
         if not hasattr(self.obj, col_name):
@@ -96,13 +83,13 @@ class BaseInterface(object):
 
     def _get_values(self, lst, list_columns):
         """
-            Get Values: formats values for list template.
-            returns [{'col_name':'col_value',....},{'col_name':'col_value',....}]
+        Get Values: formats values for list template.
+        returns [{'col_name':'col_value',....},{'col_name':'col_value',....}]
 
-            :param lst:
-                The list of item objects from query
-            :param list_columns:
-                The list of columns to include
+        :param lst:
+            The list of item objects from query
+        :param list_columns:
+            The list of columns to include
         """
         retlst = []
         for item in lst:
@@ -114,13 +101,13 @@ class BaseInterface(object):
 
     def get_values(self, lst, list_columns):
         """
-            Get Values: formats values for list template.
-            returns [{'col_name':'col_value',....},{'col_name':'col_value',....}]
+        Get Values: formats values for list template.
+        returns [{'col_name':'col_value',....},{'col_name':'col_value',....}]
 
-            :param lst:
-                The list of item objects from query
-            :param list_columns:
-                The list of columns to include
+        :param lst:
+            The list of item objects from query
+        :param list_columns:
+            The list of columns to include
         """
         for item in lst:
             retdict = {}
@@ -130,7 +117,7 @@ class BaseInterface(object):
 
     def get_values_json(self, lst, list_columns):
         """
-            Converts list of objects from query to JSON
+        Converts list of objects from query to JSON
         """
         result = []
         for item in self.get_values(lst, list_columns):
@@ -210,6 +197,9 @@ class BaseInterface(object):
     def is_enum(self, col_name):
         return False
 
+    def is_json(self, col_name):
+        return False
+
     def is_relation(self, prop):
         return False
 
@@ -238,7 +228,7 @@ class BaseInterface(object):
         return False
 
     def is_pk_composite(self):
-        raise False
+        return False
 
     def is_fk(self, col_name):
         return False
@@ -255,30 +245,30 @@ class BaseInterface(object):
     -----------------------------------------
     """
 
-    def add(self, item):
+    def add(self, item: Any, commit: bool = True) -> None:
         """
-            Adds object
-        """
-        raise NotImplementedError
-
-    def edit(self, item):
-        """
-            Edit (change) object
+        Adds object
         """
         raise NotImplementedError
 
-    def delete(self, item):
+    def edit(self, item: Any, commit: bool = True) -> None:
         """
-            Deletes object
+        Edit (change) object
         """
         raise NotImplementedError
 
-    def get_col_default(self, col_name):
+    def delete(self, item: Any, commit: bool = True) -> None:
+        """
+        Deletes object
+        """
+        raise NotImplementedError
+
+    def get_col_default(self, col_name: str):
         pass
 
     def get_keys(self, lst):
         """
-            return a list of pk values from object list
+        return a list of pk values from object list
         """
         pk_name = self.get_pk_name()
         if self.is_pk_composite():
@@ -288,7 +278,7 @@ class BaseInterface(object):
 
     def get_pk_name(self):
         """
-            Returns the primary key name
+        Returns the primary key name
         """
         raise NotImplementedError
 
@@ -301,8 +291,8 @@ class BaseInterface(object):
 
     def get(self, pk, filter=None):
         """
-            return the record from key, you can optionally pass filters
-            if pk exits on the db but filters exclude it it will return none.
+        return the record from key, you can optionally pass filters
+        if pk exits on the db but filters exclude it it will return none.
         """
         pass
 
@@ -311,11 +301,11 @@ class BaseInterface(object):
 
     def get_related_interface(self, col_name):
         """
-            Returns a BaseInterface for the related model
-            of column name.
+        Returns a BaseInterface for the related model
+        of column name.
 
-            :param col_name: Column name with relation
-            :return: BaseInterface
+        :param col_name: Column name with relation
+        :return: BaseInterface
         """
         raise NotImplementedError
 
@@ -327,25 +317,25 @@ class BaseInterface(object):
 
     def get_columns_list(self):
         """
-            Returns a list of all the columns names
+        Returns a list of all the columns names
         """
         return []
 
     def get_user_columns_list(self):
         """
-            Returns a list of user viewable columns names
+        Returns a list of user viewable columns names
         """
         return self.get_columns_list()
 
     def get_search_columns_list(self):
         """
-            Returns a list of searchable columns names
+        Returns a list of searchable columns names
         """
         return []
 
     def get_order_columns_list(self, list_columns=None):
         """
-            Returns a list of order columns names
+        Returns a list of order columns names
         """
         return []
 

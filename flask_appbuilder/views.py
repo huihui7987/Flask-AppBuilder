@@ -1,34 +1,40 @@
-import json
 import logging
 import os.path as op
-from typing import Set
 
 from flask import (
-    abort,
+    current_app,
     flash,
-    jsonify,
-    make_response,
     redirect,
     request,
     send_file,
     session,
-    url_for,
 )
-
-from ._compat import as_unicode, string_types
-from .baseviews import BaseCRUDView, BaseFormView, BaseView, expose, expose_api
-from .const import FLAMSG_ERR_SEC_ACCESS_DENIED, PERMISSION_PREFIX
-from .filemanager import uuid_originalname
-from .security.decorators import has_access, has_access_api, permission_name
-from .urltools import get_filter_args, get_order_args, get_page_args, get_page_size_args
-from .widgets import GroupFormListWidget, ListMasterWidget
+from flask_appbuilder._compat import as_unicode
+from flask_appbuilder.baseviews import (
+    BaseCRUDView,
+    BaseFormView,
+    BaseView,
+    expose,
+)
+from flask_appbuilder.const import FLAMSG_ERR_SEC_ACCESS_DENIED, PERMISSION_PREFIX
+from flask_appbuilder.exceptions import FABException
+from flask_appbuilder.filemanager import uuid_originalname
+from flask_appbuilder.security.decorators import (
+    has_access,
+)
+from flask_appbuilder.urltools import (
+    get_order_args,
+    get_page_args,
+    get_page_size_args,
+)
+from flask_appbuilder.widgets import GroupFormListWidget, ListMasterWidget
 
 log = logging.getLogger(__name__)
 
 
 class IndexView(BaseView):
     """
-        A simple view that implements the index for the site
+    A simple view that implements the index for the site
     """
 
     route_base = ""
@@ -43,8 +49,8 @@ class IndexView(BaseView):
 
 class UtilView(BaseView):
     """
-        A simple view that implements special util routes.
-        At the moment it only supports the back special endpoint.
+    A simple view that implements special util routes.
+    At the moment it only supports the back special endpoint.
     """
 
     route_base = ""
@@ -57,15 +63,15 @@ class UtilView(BaseView):
 
 class SimpleFormView(BaseFormView):
     """
-        View for presenting your own forms
-        Inherit from this view to provide some base processing
-        for your customized form views.
+    View for presenting your own forms
+    Inherit from this view to provide some base processing
+    for your customized form views.
 
-        Notice that this class inherits from BaseView so all properties
-        from the parent class can be overridden also.
+    Notice that this class inherits from BaseView so all properties
+    from the parent class can be overridden also.
 
-        Implement form_get and form_post to implement your
-        form pre-processing and post-processing
+    Implement form_get and form_post to implement your
+    form pre-processing and post-processing
     """
 
     @expose("/form", methods=["GET"])
@@ -107,15 +113,15 @@ class SimpleFormView(BaseFormView):
 
 class PublicFormView(BaseFormView):
     """
-        View for presenting your own forms
-        Inherit from this view to provide some base
-        processing for your customized form views.
+    View for presenting your own forms
+    Inherit from this view to provide some base
+    processing for your customized form views.
 
-        Notice that this class inherits from BaseView
-        so all properties from the parent class can be overridden also.
+    Notice that this class inherits from BaseView
+    so all properties from the parent class can be overridden also.
 
-        Implement form_get and form_post to implement
-        your form pre-processing and post-processing
+    Implement form_get and form_post to implement
+    your form pre-processing and post-processing
     """
 
     @expose("/form", methods=["GET"])
@@ -151,373 +157,15 @@ class PublicFormView(BaseFormView):
             )
 
 
-class RestCRUDView(BaseCRUDView):
+class ModelView(BaseCRUDView):
     """
-        This class view exposes REST method for CRUD operations on you models
-    """
+    This is the CRUD generic view.
+    If you want to automatically implement create, edit,
+    delete, show, and list from your database tables,
+    inherit your views from this class.
 
-    disable_api_route_methods: bool = False
-    """ Flag to disable this class exposed methods, note that this class
-    will eventually get deprecated """
-
-    def __init__(self, **kwargs):
-        if self.disable_api_route_methods:
-            api_route_methods: Set = {
-                "api",
-                "api_read",
-                "api_get",
-                "api_create",
-                "api_update",
-                "api_delete",
-                "api_column_add",
-                "api_column_edit",
-                "api_readvalues",
-            }
-            self.exclude_route_methods = self.exclude_route_methods | api_route_methods
-        super().__init__(**kwargs)
-
-    def _search_form_json(self):
-        pass
-
-    def _get_api_urls(self, api_urls=None):
-        """
-            Completes a dict with the CRUD urls of the API.
-
-        :param api_urls: A dict with the urls {'<FUNCTION>':'<URL>',...}
-        :return: A dict with the CRUD urls of the base API.
-        """
-        view_name = self.__class__.__name__
-        api_urls = api_urls or {}
-        api_urls["read"] = url_for(view_name + ".api_read")
-        api_urls["delete"] = url_for(view_name + ".api_delete", pk="")
-        api_urls["create"] = url_for(view_name + ".api_create")
-        api_urls["update"] = url_for(view_name + ".api_update", pk="")
-        return api_urls
-
-    def _get_modelview_urls(self, modelview_urls=None):
-        view_name = self.__class__.__name__
-        modelview_urls = modelview_urls or {}
-        modelview_urls["show"] = url_for(view_name + ".show", pk="")
-        modelview_urls["add"] = url_for(view_name + ".add")
-        modelview_urls["edit"] = url_for(view_name + ".edit", pk="")
-        return modelview_urls
-
-    @expose("/api", methods=["GET"])
-    @has_access_api
-    @permission_name("list")
-    def api(self):
-        log.warning("This API is deprecated and will be removed on 1.15.X")
-        view_name = self.__class__.__name__
-        api_urls = self._get_api_urls()
-        modelview_urls = self._get_modelview_urls()
-        #
-        # Collects the CRUD permissions
-        can_show = self.appbuilder.sm.has_access("can_show", view_name)
-        can_edit = self.appbuilder.sm.has_access("can_edit", view_name)
-        can_add = self.appbuilder.sm.has_access("can_add", view_name)
-        can_delete = self.appbuilder.sm.has_access("can_delete", view_name)
-        #
-        # Prepares the form with the search fields make it JSON serializable
-        form_fields = {}
-        search_filters = {}
-        dict_filters = self._filters.get_search_filters()
-        form = self.search_form.refresh()
-        for col in self.search_columns:
-            form_fields[col] = form[col]()
-            search_filters[col] = [as_unicode(flt.name) for flt in dict_filters[col]]
-
-        ret_json = jsonify(
-            can_show=can_show,
-            can_add=can_add,
-            can_edit=can_edit,
-            can_delete=can_delete,
-            label_columns=self._label_columns_json(),
-            list_columns=self.list_columns,
-            order_columns=self.order_columns,
-            page_size=self.page_size,
-            modelview_name=view_name,
-            api_urls=api_urls,
-            search_filters=search_filters,
-            search_fields=form_fields,
-            modelview_urls=modelview_urls,
-        )
-        response = make_response(ret_json, 200)
-        response.headers["Content-Type"] = "application/json"
-        return response
-
-    @expose_api(name="read", url="/api/read", methods=["GET"])
-    @has_access_api
-    @permission_name("list")
-    def api_read(self):
-        """
-        """
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        # Get arguments for ordering
-        if get_order_args().get(self.__class__.__name__):
-            order_column, order_direction = get_order_args().get(
-                self.__class__.__name__
-            )
-        else:
-            order_column, order_direction = "", ""
-        page = get_page_args().get(self.__class__.__name__)
-        page_size = get_page_size_args().get(self.__class__.__name__)
-        get_filter_args(self._filters)
-        joined_filters = self._filters.get_joined_filters(self._base_filters)
-        count, lst = self.datamodel.query(
-            joined_filters,
-            order_column,
-            order_direction,
-            page=page,
-            page_size=page_size,
-        )
-        result = self.datamodel.get_values_json(lst, self.list_columns)
-        pks = self.datamodel.get_keys(lst)
-        ret_json = jsonify(
-            label_columns=self._label_columns_json(),
-            list_columns=self.list_columns,
-            order_columns=self.order_columns,
-            page=page,
-            page_size=page_size,
-            count=count,
-            modelview_name=self.__class__.__name__,
-            pks=pks,
-            result=result,
-        )
-        response = make_response(ret_json, 200)
-        response.headers["Content-Type"] = "application/json"
-        return response
-
-    def show_item_dict(self, item):
-        """Returns a json-able dict for show"""
-        d = {}
-        for col in self.show_columns:
-            v = getattr(item, col)
-            if not isinstance(v, (int, float, string_types)):
-                v = str(v)
-            d[col] = v
-        return d
-
-    @expose_api(name="get", url="/api/get/<pk>", methods=["GET"])
-    @has_access_api
-    @permission_name("show")
-    def api_get(self, pk):
-        """
-        """
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        # Get arguments for ordering
-        item = self.datamodel.get(pk, self._base_filters)
-        if not item:
-            abort(404)
-        ret_json = jsonify(
-            pk=pk,
-            label_columns=self._label_columns_json(),
-            include_columns=self.show_columns,
-            modelview_name=self.__class__.__name__,
-            result=self.show_item_dict(item),
-        )
-        response = make_response(ret_json, 200)
-        response.headers["Content-Type"] = "application/json"
-        return response
-
-    @expose_api(name="create", url="/api/create", methods=["POST"])
-    @has_access_api
-    @permission_name("add")
-    def api_create(self):
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        get_filter_args(self._filters)
-        exclude_cols = self._filters.get_relation_cols()
-        form = self.add_form.refresh()
-        self._fill_form_exclude_cols(exclude_cols, form)
-        if form.validate():
-            item = self.datamodel.obj()
-            form.populate_obj(item)
-            self.pre_add(item)
-            if self.datamodel.add(item):
-                self.post_add(item)
-                http_return_code = 200
-            else:
-                http_return_code = 500
-            payload = {
-                "message": self.datamodel.message[0],
-                "item": self.show_item_dict(item),
-                "severity": self.datamodel.message[1],
-            }
-        else:
-            payload = {"message": "Validation error", "error_details": form.errors}
-            http_return_code = 500
-        return make_response(jsonify(payload), http_return_code)
-
-    @expose_api(name="update", url="/api/update/<pk>", methods=["PUT"])
-    @has_access_api
-    @permission_name("edit")
-    def api_update(self, pk):
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        get_filter_args(self._filters)
-        exclude_cols = self._filters.get_relation_cols()
-
-        item = self.datamodel.get(pk, self._base_filters)
-        if not item:
-            abort(404)
-        # convert pk to correct type, if pk is non string type.
-        pk = self.datamodel.get_pk_value(item)
-
-        form = self.edit_form.refresh(request.form)
-        # fill the form with the suppressed cols, generated from exclude_cols
-        self._fill_form_exclude_cols(exclude_cols, form)
-        # trick to pass unique validation
-        form._id = pk
-        http_return_code = 500
-        if form.validate():
-
-            # Deleting form fields not specified as keys in POST data
-            # this allows for other Model columns to be left untouched when
-            # unspecified.
-            form_fields = set([t for t in form._fields.keys()])
-            for field in form_fields - set(request.form.keys()):
-                delattr(form, field)
-
-            form.populate_obj(item)
-            self.pre_update(item)
-            if self.datamodel.edit(item):
-                self.post_update(item)
-                http_return_code = 200
-            payload = {
-                "message": self.datamodel.message[0],
-                "severity": self.datamodel.message[1],
-                "item": self.show_item_dict(item),
-            }
-        else:
-            payload = {
-                "message": "Validation error",
-                "error_details": form.errors,
-                "severity": "warning",
-            }
-        return make_response(jsonify(payload), http_return_code)
-
-    @expose_api(name="delete", url="/api/delete/<pk>", methods=["DELETE"])
-    @has_access_api
-    @permission_name("delete")
-    def api_delete(self, pk):
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        item = self.datamodel.get(pk, self._base_filters)
-        if not item:
-            abort(404)
-        self.pre_delete(item)
-        if self.datamodel.delete(item):
-            self.post_delete(item)
-            http_return_code = 200
-        else:
-            http_return_code = 500
-        response = make_response(
-            jsonify(
-                {
-                    "message": self.datamodel.message[0],
-                    "severity": self.datamodel.message[1],
-                }
-            ),
-            http_return_code,
-        )
-        response.headers["Content-Type"] = "application/json"
-        return response
-
-    def _get_related_column_data(self, col_name, filters):
-        rel_datamodel = self.datamodel.get_related_interface(col_name)
-        _filters = rel_datamodel.get_filters(rel_datamodel.get_search_columns_list())
-        get_filter_args(_filters)
-        if filters:
-            filters = _filters.add_filter_list(filters)
-        else:
-            filters = _filters
-        result = rel_datamodel.query(filters)[1]
-        ret_list = list()
-        for item in result:
-            pk = rel_datamodel.get_pk_value(item)
-            ret_list.append({"id": int(pk), "text": str(item)})
-        ret_json = json.dumps(ret_list)
-        return ret_json
-
-    @expose_api(name="column_add", url="/api/column/add/<col_name>", methods=["GET"])
-    @has_access_api
-    @permission_name("add")
-    def api_column_add(self, col_name):
-        """
-            Returns list of (pk, object) nice to use on select2.
-            Use only for related columns.
-            Always filters with add_form_query_rel_fields, and accepts extra filters
-            on endpoint arguments.
-        :param col_name: The related column name
-        :return: JSON response
-        """
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        filter_rel_fields = None
-        if self.add_form_query_rel_fields:
-            filter_rel_fields = self.add_form_query_rel_fields.get(col_name)
-        ret_json = self._get_related_column_data(col_name, filter_rel_fields)
-        response = make_response(ret_json, 200)
-        response.headers["Content-Type"] = "application/json"
-        return response
-
-    @expose_api(name="column_edit", url="/api/column/edit/<col_name>", methods=["GET"])
-    @has_access_api
-    @permission_name("edit")
-    def api_column_edit(self, col_name):
-        """
-            Returns list of (pk, object) nice to use on select2.
-            Use only for related columns.
-            Always filters with edit_form_query_rel_fields, and accepts extra filters
-            on endpoint arguments.
-        :param col_name: The related column name
-        :return: JSON response
-        """
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        filter_rel_fields = None
-        if self.edit_form_query_rel_fields:
-            filter_rel_fields = self.edit_form_query_rel_fields
-        ret_json = self._get_related_column_data(col_name, filter_rel_fields)
-        response = make_response(ret_json, 200)
-        response.headers["Content-Type"] = "application/json"
-        return response
-
-    @expose_api(name="readvalues", url="/api/readvalues", methods=["GET"])
-    @has_access_api
-    @permission_name("list")
-    def api_readvalues(self):
-        """
-        """
-        log.warning("This API is deprecated and will be removed on 2.3.X")
-        # Get arguments for ordering
-        if get_order_args().get(self.__class__.__name__):
-            order_column, order_direction = get_order_args().get(
-                self.__class__.__name__
-            )
-        else:
-            order_column, order_direction = "", ""
-        get_filter_args(self._filters)
-        joined_filters = self._filters.get_joined_filters(self._base_filters)
-        count, result = self.datamodel.query(
-            joined_filters, order_column, order_direction
-        )
-
-        ret_list = list()
-        for item in result:
-            pk = self.datamodel.get_pk_value(item)
-            ret_list.append({"id": int(pk), "text": str(item)})
-
-        ret_json = json.dumps(ret_list)
-        response = make_response(ret_json, 200)
-        response.headers["Content-Type"] = "application/json"
-        return response
-
-
-class ModelView(RestCRUDView):
-    """
-        This is the CRUD generic view.
-        If you want to automatically implement create, edit,
-        delete, show, and list from your database tables,
-        inherit your views from this class.
-
-        Notice that this class inherits from BaseCRUDView and BaseModelView
-        so all properties from the parent class can be overridden.
+    Notice that this class inherits from BaseCRUDView and BaseModelView
+    so all properties from the parent class can be overridden.
     """
 
     def __init__(self, **kwargs):
@@ -547,8 +195,12 @@ class ModelView(RestCRUDView):
     @expose("/list/")
     @has_access
     def list(self):
-
-        widgets = self._list()
+        self.update_redirect()
+        try:
+            widgets = self._list()
+        except FABException as exc:
+            flash(f"An error occurred: {exc}", "warning")
+            return redirect(self.get_redirect())
         return self.render_template(
             self.list_template, title=self.list_title, widgets=widgets
         )
@@ -633,14 +285,14 @@ class ModelView(RestCRUDView):
     @has_access
     def download(self, filename):
         return send_file(
-            op.join(self.appbuilder.app.config["UPLOAD_FOLDER"], filename),
-            attachment_filename=uuid_originalname(filename),
+            op.join(current_app.config["UPLOAD_FOLDER"], filename),
+            download_name=uuid_originalname(filename),
             as_attachment=True,
         )
 
     def get_action_permission_name(self, name: str) -> str:
         """
-            Get the permission name of an action name
+        Get the permission name of an action name
         """
         _permission_name = self.method_permission_name.get(
             self.actions.get(name).func.__name__
@@ -653,7 +305,7 @@ class ModelView(RestCRUDView):
     @expose("/action/<string:name>/<pk>", methods=["GET", "POST"])
     def action(self, name, pk):
         """
-            Action method to handle actions from a show view
+        Action method to handle actions from a show view
         """
         # Maintains compatibility but refuses to proceed if CSRF is enabled
         if not self.is_get_mutation_allowed():
@@ -674,7 +326,7 @@ class ModelView(RestCRUDView):
     @expose("/action_post", methods=["POST"])
     def action_post(self):
         """
-            Action method to handle multiple records selected from a list view
+        Action method to handle multiple records selected from a list view
         """
         name = request.form["action"]
         pks = request.form.getlist("rowid")
@@ -693,18 +345,18 @@ class ModelView(RestCRUDView):
 
 class MasterDetailView(BaseCRUDView):
     """
-        Implements behaviour for controlling two CRUD views
-        linked by PK and FK, in a master/detail type with
-        two lists.
+    Implements behaviour for controlling two CRUD views
+    linked by PK and FK, in a master/detail type with
+    two lists.
 
-        Master view will behave like a left menu::
+    Master view will behave like a left menu::
 
-            class DetailView(ModelView):
-                datamodel = SQLAInterface(DetailTable, db.session)
+        class DetailView(ModelView):
+            datamodel = SQLAInterface(DetailTable, db.session)
 
-            class MasterView(MasterDetailView):
-                datamodel = SQLAInterface(MasterTable, db.session)
-                related_views = [DetailView]
+        class MasterView(MasterDetailView):
+            datamodel = SQLAInterface(MasterTable, db.session)
+            related_views = [DetailView]
 
     """
 
@@ -744,13 +396,13 @@ class MasterDetailView(BaseCRUDView):
 
 class MultipleView(BaseView):
     """
-        Use this view to render multiple views on the same page,
-        exposed on the list endpoint.
+    Use this view to render multiple views on the same page,
+    exposed on the list endpoint.
 
-        example (after defining GroupModelView and ContactModelView)::
+    example (after defining GroupModelView and ContactModelView)::
 
-            class MultipleViewsExp(MultipleView):
-                views = [GroupModelView, ContactModelView]
+        class MultipleViewsExp(MultipleView):
+            views = [GroupModelView, ContactModelView]
 
     """
 
@@ -803,7 +455,7 @@ class MultipleView(BaseView):
 
 class CompactCRUDMixin(BaseCRUDView):
     """
-        Mix with ModelView to implement a list with add and edit on the same page.
+    Mix with ModelView to implement a list with add and edit on the same page.
     """
 
     @classmethod
@@ -816,8 +468,7 @@ class CompactCRUDMixin(BaseCRUDView):
 
     @classmethod
     def get_key(cls, k, default=None):
-        """Matching get method for ``set_key``
-        """
+        """Matching get method for ``set_key``"""
         k = cls.__name__ + "__" + k
         if k in session:
             return session[k]
@@ -826,14 +477,13 @@ class CompactCRUDMixin(BaseCRUDView):
 
     @classmethod
     def del_key(cls, k):
-        """Matching get method for ``set_key``
-        """
+        """Matching get method for ``set_key``"""
         k = cls.__name__ + "__" + k
         session.pop(k)
 
-    def _get_list_widget(self, **args):
-        """ get joined base filter and current active filter for query """
-        widgets = super(CompactCRUDMixin, self)._get_list_widget(**args)
+    def _get_list_widget(self, **kwargs):
+        """get joined base filter and current active filter for query"""
+        widgets = super(CompactCRUDMixin, self)._get_list_widget(**kwargs)
         session_form_widget = self.get_key("session_form_widget", None)
 
         form_widget = None
